@@ -6,7 +6,6 @@ import os
 
 TOKEN = os.getenv("TOKEN")
 LOG_CHANNEL_ID = 1527284881351118960
-GUILD_ID = 0  # сюда можно поставить ID сервера для быстрой синхронизации
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -39,6 +38,9 @@ async def on_ready():
     print(f"Бот запущен: {bot.user}")
 
 
+COLOR = discord.Color.from_rgb(31, 31, 31)   # #1F1F1F
+
+
 @bot.event
 async def on_message_delete(message):
     if message.author.bot or message.guild is None:
@@ -50,27 +52,13 @@ async def on_message_delete(message):
 
     embed = discord.Embed(
         title="Удаленное сообщение",
-        color=discord.Color.from_rgb(128, 128, 128),
+        color=COLOR,
         timestamp=moscow_time()
     )
 
-    embed.add_field(
-        name="Пользователь",
-        value=f"{message.author.mention}\nID: `{message.author.id}`",
-        inline=False
-    )
-
-    embed.add_field(
-        name="Канал",
-        value=message.channel.mention,
-        inline=False
-    )
-
-    embed.add_field(
-        name="Сообщение",
-        value=f"> {message.content}" if message.content else "> Без текста",
-        inline=False
-    )
+    embed.add_field(name="Пользователь", value=f"{message.author.mention}\nID: `{message.author.id}`", inline=False)
+    embed.add_field(name="Канал", value=message.channel.mention, inline=False)
+    embed.add_field(name="Сообщение", value=f"> {message.content}" if message.content else "> Без текста", inline=False)
 
     await log.send(embed=embed)
 
@@ -86,33 +74,14 @@ async def on_message_edit(before, after):
 
     embed = discord.Embed(
         title="Измененное сообщение",
-        color=discord.Color.from_rgb(128, 128, 128),
+        color=COLOR,
         timestamp=moscow_time()
     )
 
-    embed.add_field(
-        name="Пользователь",
-        value=f"{before.author.mention}\nID: `{before.author.id}`",
-        inline=False
-    )
-
-    embed.add_field(
-        name="Канал",
-        value=before.channel.mention,
-        inline=False
-    )
-
-    embed.add_field(
-        name="Было",
-        value=f"> {before.content}",
-        inline=False
-    )
-
-    embed.add_field(
-        name="Стало",
-        value=f"> {after.content}",
-        inline=False
-    )
+    embed.add_field(name="Пользователь", value=f"{before.author.mention}\nID: `{before.author.id}`", inline=False)
+    embed.add_field(name="Канал", value=before.channel.mention, inline=False)
+    embed.add_field(name="Было", value=f"> {before.content}", inline=False)
+    embed.add_field(name="Стало", value=f"> {after.content}", inline=False)
 
     await log.send(embed=embed)
 
@@ -125,9 +94,8 @@ async def avatar(interaction: discord.Interaction, user: discord.Member = None):
 
     embed = discord.Embed(
         title=f"Аватар — {user.name}",
-        color=discord.Color.from_rgb(128, 128, 128)
+        color=COLOR
     )
-
     embed.set_image(url=user.display_avatar.url)
 
     await interaction.response.send_message(embed=embed)
