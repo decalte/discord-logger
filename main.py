@@ -5,6 +5,7 @@ import os
 
 TOKEN = os.getenv("TOKEN")
 LOG_CHANNEL_ID = 1527284881351118960
+VOICE_CHANNEL_ID = 123456789012345678  # <-- ВСТАВЬ СЮДА ID ГОЛОСОВОГО КАНАЛА
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -12,6 +13,7 @@ intents.messages = True
 intents.guilds = True
 intents.members = True
 intents.presences = True
+intents.voice_states = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -25,6 +27,23 @@ def get_log_channel(guild):
 async def on_ready():
     await bot.change_presence(status=discord.Status.idle)
     print(f"Бот запущен: {bot.user}")
+
+    channel = bot.get_channel(VOICE_CHANNEL_ID)
+    if channel and channel.guild.voice_client is None:
+        try:
+            await channel.connect()
+
+            try:
+                await channel.guild.change_voice_state(
+                    channel=channel,
+                    self_mute=True,
+                    self_deaf=True
+                )
+            except:
+                pass
+
+        except Exception as e:
+            print(f"Ошибка подключения к голосовому каналу: {e}")
 
 @bot.event
 async def on_message_delete(message):
