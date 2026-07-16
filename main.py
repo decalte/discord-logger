@@ -38,7 +38,7 @@ async def on_ready():
     print(f"Бот запущен: {bot.user}")
 
 
-COLOR = discord.Color.from_rgb(31, 31, 31)   # #1F1F1F
+COLOR = discord.Color.from_rgb(47, 47, 47)   # #2F2F2F
 
 
 @bot.event
@@ -64,41 +64,4 @@ async def on_message_delete(message):
 
 
 @bot.event
-async def on_message_edit(before, after):
-    if before.author.bot or before.guild is None or before.content == after.content:
-        return
-
-    log = get_log_channel(before.guild)
-    if log is None:
-        return
-
-    embed = discord.Embed(
-        title="Измененное сообщение",
-        color=COLOR,
-        timestamp=moscow_time()
-    )
-
-    embed.add_field(name="Пользователь", value=f"{before.author.mention}\nID: `{before.author.id}`", inline=False)
-    embed.add_field(name="Канал", value=before.channel.mention, inline=False)
-    embed.add_field(name="Было", value=f"> {before.content}", inline=False)
-    embed.add_field(name="Стало", value=f"> {after.content}", inline=False)
-
-    await log.send(embed=embed)
-
-
-@bot.tree.command(name="avatar", description="Показать аватар пользователя")
-@app_commands.describe(user="Пользователь")
-async def avatar(interaction: discord.Interaction, user: discord.Member = None):
-    if user is None:
-        user = interaction.user
-
-    embed = discord.Embed(
-        title=f"Аватар — {user.name}",
-        color=COLOR
-    )
-    embed.set_image(url=user.display_avatar.url)
-
-    await interaction.response.send_message(embed=embed)
-
-
-bot.run(TOKEN)
+async def on_message_edit(before​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
