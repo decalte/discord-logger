@@ -25,6 +25,9 @@ def get_log_channel(guild):
     return guild.get_channel(LOG_CHANNEL_ID)
 
 
+COLOR = discord.Color.from_rgb(47, 47, 47)   # #2F2F2F
+
+
 @bot.event
 async def on_ready():
     await bot.change_presence(status=discord.Status.idle)
@@ -38,9 +41,7 @@ async def on_ready():
     print(f"Бот запущен: {bot.user}")
 
 
-COLOR = discord.Color.from_rgb(47, 47, 47)   # #2F2F2F
-
-
+# ===================== ЛОГИ =====================
 @bot.event
 async def on_message_delete(message):
     if message.author.bot or message.guild is None:
@@ -64,4 +65,42 @@ async def on_message_delete(message):
 
 
 @bot.event
-async def on_message_edit(before​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
+async def on_message_edit(before, after):
+    if before.author.bot or before.guild is None or before.content == after.content:
+        return
+
+    log = get_log_channel(before.guild)
+    if log is None:
+        return
+
+    embed = discord.Embed(
+        title="Измененное сообщение",
+        color=COLOR,
+        timestamp=moscow_time()
+    )
+
+    embed.add_field(name="Пользователь", value=f"{before.author.mention}\nID: `{before.author.id}`", inline=False)
+    embed.add_field(name="Канал", value=before.channel.mention, inline=False)
+    embed.add_field(name="Было", value=f"> {before.content}", inline=False)
+    embed.add_field(name="Стало", value=f"> {after.content}", inline=False)
+
+    await log.send(embed=embed)
+
+
+# ===================== КОМАНДА АВАТАР =====================
+@bot.tree.command(name="avatar", description="Посмотреть аватарку")
+@app_commands.describe(user="Пользователь")   # ← Русское название
+async def avatar(interaction: discord.Interaction, user: discord.Member = None):
+    if user is None:
+        user = interaction.user
+
+    embed = discord.Embed(
+        title=f"Аватар — {user.name}",
+        color=COLOR
+    )
+    embed.set_image(url=user.display_avatar.url)
+
+    await interaction.response.send_message(embed=embed)
+
+
+bot.run(TOKEN)
