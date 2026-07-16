@@ -41,7 +41,7 @@ async def on_ready():
     print(f"Бот запущен: {bot.user}")
 
 
-# ===================== ЛОГИ =====================
+#                 ЛОГИ 
 @bot.event
 async def on_message_delete(message):
     if message.author.bot or message.guild is None:
@@ -87,7 +87,7 @@ async def on_message_edit(before, after):
     await log.send(embed=embed)
 
 
-# ===================== КОМАНДА АВАТАР =====================
+#                            КОМАНДА АВАТАР 
 @bot.tree.command(name="avatar", description="Посмотреть аватарку")
 @app_commands.describe(user="Пользователь")   # ← Русское название
 async def avatar(interaction: discord.Interaction, user: discord.Member = None):
