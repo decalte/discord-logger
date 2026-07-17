@@ -942,7 +942,7 @@ async def activate_antichrash(member, reason):
 
 
         embed.add_field(
-            name="Администратору",
+            name="Администратор",
             value=(
                 f"{member.mention}\n"
                 f"ID: `{str(member.id)}`"
@@ -1086,7 +1086,7 @@ class AntiCrashView(discord.ui.View):
         )
 
         embed.add_field(
-            name="Администратору",
+            name="Администратор",
             value=(
                 f"{member.mention}\n"
                 f"ID: `{member.id}`"
@@ -1095,7 +1095,7 @@ class AntiCrashView(discord.ui.View):
         )
 
         embed.add_field(
-            name="Восстановленные роли",
+            name="Возвращенные роли",
             value=roles_text,
             inline=False
         )
