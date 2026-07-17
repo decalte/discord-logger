@@ -455,7 +455,7 @@ async def on_member_update(
         )
 
         embed.add_field(
-            name="Снял",
+            name="Снял(а)",
             value=moderator,
             inline=False
         )
@@ -487,7 +487,7 @@ async def on_member_update(
     )
 
     embed.add_field(
-        name="Выдал",
+        name="Выдал(а)",
         value=moderator,
         inline=False
     )
@@ -551,7 +551,7 @@ async def on_member_remove(member: discord.Member):
             timestamp=moscow_time()
         )
         embed.add_field(
-            name="Выгнал",
+            name="Выгнал(а)",
             value=moderator,
             inline=False
         )
@@ -642,7 +642,7 @@ async def on_member_ban(
     )
 
     embed.add_field(
-        name="Выдал",
+        name="Выдал(а)",
         value=moderator,
         inline=False
     )
@@ -712,7 +712,7 @@ async def on_member_unban(
     )
 
     embed.add_field(
-        name="Снял",
+        name="Снял(а)",
         value=moderator,
         inline=False
     )
@@ -1184,7 +1184,7 @@ class AntiCrashView(discord.ui.View):
         )
 
         embed.add_field(
-            name="Снял",
+            name="Снял(а)",
             value=(
                 f"{interaction.user.mention}\n"
                 f"ID: `{interaction.user.id}`"
