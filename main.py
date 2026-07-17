@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 
 # —————————————————————————————————————————————
@@ -25,6 +25,10 @@ BAN_LOG_CHANNEL_ID = 1527340343476093069
 LEAVE_LOG_CHANNEL_ID = 1527694442998403172
 ANTICRASH_LOG_CHANNEL_ID = 1527478400728694865
 CHANNEL_LOG_CHANNEL_ID = 1527681524416123020
+VOICE_CHANNEL_ID = 1527411803032780960
+
+# Защита от одновременных попыток подключения из on_ready, watchdog и событий.
+voice_connection_lock = asyncio.Lock()
 
 
 # —————————————————————————————————————————————
@@ -141,22 +145,126 @@ async def find_audit_entry(
 # ЗАПУСК И СИНХРОНИЗАЦИЯ КОМАНД
 # —————————————————————————————————————————————
 
+async def connect_to_target_voice_channel():
+    """Подключает бота к заданному голосовому каналу с выключенными микрофоном и звуком."""
+    if not VOICE_CHANNEL_ID:
+        print("VOICE_CHANNEL_ID не указан — подключение к голосовому каналу пропущено")
+        return
+
+    async with voice_connection_lock:
+        channel = bot.get_channel(VOICE_CHANNEL_ID)
+
+        if channel is None:
+            try:
+                channel = await bot.fetch_channel(VOICE_CHANNEL_ID)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException) as error:
+                print(f"Не удалось получить голосовой канал {VOICE_CHANNEL_ID}: {error}")
+                return
+
+        if not isinstance(channel, (discord.VoiceChannel, discord.StageChannel)):
+            print(f"Канал {VOICE_CHANNEL_ID} не является голосовым или Stage-каналом")
+            return
+
+        me = channel.guild.me
+        if me is None:
+            print(f"Не удалось получить участника-бота на сервере {channel.guild.name}")
+            return
+
+        permissions = channel.permissions_for(me)
+        if not permissions.view_channel or not permissions.connect:
+            print("У бота нет прав View Channel / Connect для голосового канала")
+            return
+
+        existing_voice = discord.utils.get(bot.voice_clients, guild=channel.guild)
+
+        try:
+            if existing_voice is not None:
+                if existing_voice.is_connected():
+                    if existing_voice.channel is None or existing_voice.channel.id != channel.id:
+                        await existing_voice.move_to(channel)
+                else:
+                    # Удаляем зависшее голосовое подключение перед новым connect().
+                    await existing_voice.disconnect(force=True)
+                    existing_voice = None
+
+            if existing_voice is None:
+                await channel.connect(
+                    self_mute=True,
+                    self_deaf=True,
+                    reconnect=True,
+                    timeout=30.0
+                )
+
+            # Принудительно сохраняем выключенные микрофон и входящий звук,
+            # в том числе после move_to() и повторного соединения Discord.
+            await channel.guild.change_voice_state(
+                channel=channel,
+                self_mute=True,
+                self_deaf=True
+            )
+
+            print(f"Бот находится в голосовом канале: {channel.name} ({channel.id}), mute/deaf включены")
+
+        except asyncio.TimeoutError:
+            print("Истекло время ожидания подключения к голосовому каналу")
+        except discord.ClientException as error:
+            print(f"Ошибка голосового клиента: {error}")
+        except discord.Forbidden:
+            print("Discord запретил подключение или изменение голосового состояния")
+        except discord.HTTPException as error:
+            print(f"Ошибка Discord при подключении к голосовому каналу: {error}")
+
+
+@tasks.loop(seconds=30)
+async def voice_connection_watchdog():
+    """Проверяет голосовое подключение и возвращает бота в нужный канал."""
+    if not bot.is_ready():
+        return
+
+    await connect_to_target_voice_channel()
+
+
+@voice_connection_watchdog.before_loop
+async def before_voice_connection_watchdog():
+    await bot.wait_until_ready()
+
+
+@bot.event
+async def on_voice_state_update(
+    member: discord.Member,
+    before: discord.VoiceState,
+    after: discord.VoiceState
+):
+    """Возвращает бота в нужный канал и восстанавливает self mute/deaf."""
+    if bot.user is None or member.id != bot.user.id or not VOICE_CHANNEL_ID:
+        return
+
+    wrong_channel = after.channel is None or after.channel.id != VOICE_CHANNEL_ID
+    wrong_audio_state = not after.self_mute or not after.self_deaf
+
+    if wrong_channel or wrong_audio_state:
+        await asyncio.sleep(2)
+        await connect_to_target_voice_channel()
+
+
 @bot.event
 async def on_ready():
-    try:
-        synced_commands = await bot.tree.sync()
+    if not getattr(bot, "commands_synced", False):
+        try:
+            synced_commands = await bot.tree.sync()
+            bot.commands_synced = True
+            print(f"Синхронизировано команд: {len(synced_commands)}")
+        except discord.HTTPException as error:
+            print(f"Ошибка синхронизации команд: {error}")
 
-        print(
-            f"Синхронизировано команд: "
-            f"{len(synced_commands)}"
-        )
+    await bot.change_presence(status=discord.Status.idle)
+    await connect_to_target_voice_channel()
 
-    except discord.HTTPException as error:
-        print(
-            f"Ошибка синхронизации команд: {error}"
-        )
+    if not voice_connection_watchdog.is_running():
+        voice_connection_watchdog.start()
 
     print(f"Бот запущен: {bot.user}")
+
     # —————————————————————————————————————————————
 # ЛОГИ ИЗМЕНЁННЫХ СООБЩЕНИЙ
 # —————————————————————————————————————————————
@@ -347,7 +455,7 @@ async def on_member_update(
         )
 
         embed.add_field(
-            name="Снял(а)",
+            name="Снял",
             value=moderator,
             inline=False
         )
@@ -379,7 +487,7 @@ async def on_member_update(
     )
 
     embed.add_field(
-        name="Выдал(а)",
+        name="Выдал",
         value=moderator,
         inline=False
     )
@@ -443,7 +551,7 @@ async def on_member_remove(member: discord.Member):
             timestamp=moscow_time()
         )
         embed.add_field(
-            name="Выгнал(а)",
+            name="Выгнал",
             value=moderator,
             inline=False
         )
@@ -535,7 +643,7 @@ async def on_member_ban(
     )
 
     embed.add_field(
-        name="Выдал(а)",
+        name="Выдал",
         value=moderator,
         inline=False
     )
@@ -605,7 +713,7 @@ async def on_member_unban(
     )
 
     embed.add_field(
-        name="Снял(а)",
+        name="Снял",
         value=moderator,
         inline=False
     )
@@ -734,7 +842,7 @@ async def on_guild_channel_create(channel):
 
 
     embed.add_field(
-        name="Создал(а)",
+        name="Создал",
         value=f"{creator}\nID: `{channel.id}`",
         inline=False
     )
@@ -845,7 +953,7 @@ async def on_guild_channel_delete(channel):
 
 
     embed.add_field(
-        name="Удалил(а)",
+        name="Удалил",
         value=f"{deleter}\nID: `{channel.id}`",
         inline=False
     )
@@ -1077,7 +1185,7 @@ class AntiCrashView(discord.ui.View):
         )
 
         embed.add_field(
-            name="Снял(а)",
+            name="Снял",
             value=(
                 f"{interaction.user.mention}\n"
                 f"ID: `{interaction.user.id}`"
@@ -1095,7 +1203,7 @@ class AntiCrashView(discord.ui.View):
         )
 
         embed.add_field(
-            name="Возвращенные роли",
+            name="Восстановленные роли",
             value=roles_text,
             inline=False
         )
@@ -1280,19 +1388,15 @@ async def antichrash_timeout_check(
 
         anti_crash_actions[admin.id] = []
 
-@bot.event
-async def on_ready():
-
-    await bot.change_presence(
-        status=discord.Status.idle
-    )
-
-    print(f"Бот запущен: {bot.user}")
-
 # —————————————————————————————————————————————
 # ЗАПУСК БОТА
 # —————————————————————————————————————————————
 
 if __name__ == "__main__":
-    bot.run(TOKEN)
+    if not TOKEN:
+        raise RuntimeError(
+            "Переменная окружения TOKEN не задана. "
+            "Укажи токен бота перед запуском."
+        )
 
+    bot.run(TOKEN)
