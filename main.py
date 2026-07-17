@@ -660,7 +660,7 @@ async def on_guild_channel_create(channel):
 
     embed.add_field(
         name="Создал",
-        value=f"{creator}\nID: {channel.id}",
+        value=f"{creator}\nID: `{channel.id}`",
         inline=False
     )
 
@@ -769,7 +769,7 @@ async def on_guild_channel_delete(channel):
 
     embed.add_field(
         name="Удалил",
-        value=f"{deleter}\nID: {channel.id}",
+        value=f"{deleter}\nID: `{channel.id}`",
         inline=False
     )
 
@@ -865,7 +865,7 @@ async def activate_antichrash(member, reason):
 
         embed.add_field(
             name="Администратору",
-            value=f"{member.mention}\nID: {member.id}",
+            value=f"{member.mention}\nID: `{member.id}`",
             inline=False
         )
 
