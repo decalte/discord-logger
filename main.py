@@ -546,38 +546,47 @@ async def on_ready():
     except Exception as error:
         print(f"Ошибка синхронизации: {error}")
 
+
 # —————————————————————————————————————————————
 # ЛОГИ ВЫХОДА С СЕРВЕРА
 # —————————————————————————————————————————————
 
 @bot.event
 async def on_member_remove(member: discord.Member):
-    log_channel = get_leave_log_channel(member.guild)
+
+    log_channel = bot.get_channel(LEAVE_LOG_CHANNEL_ID)
 
     if not log_channel:
         return
 
-    left_at = datetime.now().astimezone().strftime("%B %d, %Y at %I:%M %p").replace(" 0", " ")
+
+    left_at = datetime.now().astimezone().strftime(
+        "%B %d, %Y at %I:%M %p"
+    ).replace(" 0", " ")
+
 
     embed = discord.Embed(
         title="Выход с сервера",
         color=0x2F2F2F
     )
 
+
     embed.add_field(
         name="Пользователь",
         value=(
             f"{member.mention}\n"
-            f"ID: `{member.id}`"
+            f"ID: `{str(member.id)}`"
         ),
         inline=False
     )
+
 
     embed.add_field(
         name="Дата и время выхода",
         value=f"> {left_at}",
         inline=False
     )
+
 
     await log_channel.send(
         embed=embed
@@ -646,7 +655,7 @@ async def on_guild_channel_create(channel):
 
 
     perms_text = "\n".join(
-        f"│ {role}"
+        f"> {role}"
         for role in permissions
     )
 
@@ -667,7 +676,7 @@ async def on_guild_channel_create(channel):
 
     embed.add_field(
         name=name_title,
-        value=f"│ {channel.name}",
+        value=f"> {channel.name}",
         inline=False
     )
 
@@ -683,7 +692,7 @@ async def on_guild_channel_create(channel):
 
     embed.add_field(
         name="Дата и время создания",
-        value=f"│ {discord.utils.format_dt(channel.created_at, style='F')}",
+        value=f"> {discord.utils.format_dt(channel.created_at, style='F')}",
         inline=False
     )
 
@@ -691,6 +700,7 @@ async def on_guild_channel_create(channel):
     await log_channel.send(
         embed=embed
     )
+
 
 
 
@@ -706,6 +716,7 @@ async def on_guild_channel_delete(channel):
 
 
     deleter = "Неизвестно"
+
 
 
     async for entry in channel.guild.audit_logs(
@@ -754,7 +765,7 @@ async def on_guild_channel_delete(channel):
 
 
     perms_text = "\n".join(
-        f"│ {role}"
+        f"> {role}"
         for role in permissions
     )
 
@@ -777,7 +788,7 @@ async def on_guild_channel_delete(channel):
 
     embed.add_field(
         name=name_title,
-        value=f"│ {channel.name}",
+        value=f"> {channel.name}",
         inline=False
     )
 
@@ -795,7 +806,7 @@ async def on_guild_channel_delete(channel):
 
     embed.add_field(
         name="Дата и время удаления",
-        value=f"│ {discord.utils.format_dt(discord.utils.utcnow(), style='F')}",
+        value=f"> {discord.utils.format_dt(discord.utils.utcnow(), style='F')}",
         inline=False
     )
 
@@ -805,21 +816,16 @@ async def on_guild_channel_delete(channel):
         embed=embed
     )
 
+
 # —————————————————————————————————————————————
 # АНТИКРАШ
 # —————————————————————————————————————————————
 
-from datetime import datetime, timezone
-import discord
-
-
 ANTI_CRASH_ROLE_ID = 1527476785590177903
 
 
-# сохранение ролей пользователей
 anti_crash_roles = {}
 
-# счётчик действий
 anti_crash_actions = {}
 
 
@@ -839,7 +845,9 @@ async def activate_antichrash(member, reason):
 
 
     # снимаем все роли
-    await member.edit(roles=[])
+    await member.edit(
+        roles=[]
+    )
 
 
     # выдаём роль антикраша
@@ -848,11 +856,15 @@ async def activate_antichrash(member, reason):
     )
 
     if anti_role:
-        await member.add_roles(anti_role)
+        await member.add_roles(
+            anti_role
+        )
 
 
 
-    log_channel = bot.get_channel(ANTI_CRASH_LOG_CHANNEL_ID)
+    log_channel = bot.get_channel(
+        ANTICRASH_LOG_CHANNEL_ID
+    )
 
 
     if log_channel:
@@ -865,21 +877,26 @@ async def activate_antichrash(member, reason):
 
         embed.add_field(
             name="Администратору",
-            value=f"{member.mention}\nID: `{member.id}`",
+            value=(
+                f"{member.mention}\n"
+                f"ID: `{str(member.id)}`"
+            ),
             inline=False
         )
 
 
         embed.add_field(
             name="Причина выдачи",
-            value=f"│ {reason}",
+            value=f"> {reason}",
             inline=False
         )
 
 
         embed.add_field(
             name="Дата и время выдачи антикраша",
-            value=f"│ {datetime.now(timezone.utc).strftime('%d %B %Y в %H:%M')}",
+            value=(
+                f"> {datetime.now(timezone.utc).strftime('%d %B %Y в %H:%M')}"
+            ),
             inline=False
         )
 
@@ -901,6 +918,7 @@ async def activate_antichrash(member, reason):
 class AntiCrashView(discord.ui.View):
 
     def __init__(self, member_id):
+
         super().__init__(
             timeout=None
         )
@@ -927,28 +945,30 @@ class AntiCrashView(discord.ui.View):
 
 
         if member is None:
+
             await interaction.response.send_message(
                 "Пользователь не найден",
                 ephemeral=True
             )
+
             return
 
 
 
-        # убрать антикраш роль
         anti_role = interaction.guild.get_role(
             ANTI_CRASH_ROLE_ID
         )
 
 
         if anti_role:
+
             await member.remove_roles(
                 anti_role
             )
 
 
 
-        # вернуть старые роли
+        # возвращаем старые роли
         roles = anti_crash_roles.get(
             member.id,
             []
@@ -962,15 +982,18 @@ class AntiCrashView(discord.ui.View):
             )
 
             if role:
+
                 await member.add_roles(
                     role
                 )
+
 
 
         anti_crash_roles.pop(
             member.id,
             None
         )
+
 
 
         await interaction.response.send_message(
@@ -981,8 +1004,9 @@ class AntiCrashView(discord.ui.View):
 
 
 
+
 # —————————————————————————————————————————————
-# БАНЫ
+# БАНЫ ДЛЯ АНТИКРАША
 # —————————————————————————————————————————————
 
 
@@ -1029,7 +1053,7 @@ async def on_member_ban(
 
 
 # —————————————————————————————————————————————
-# КИКИ
+# КИКИ ДЛЯ АНТИКРАША
 # —————————————————————————————————————————————
 
 
@@ -1075,7 +1099,7 @@ async def on_member_remove(
 
 
 # —————————————————————————————————————————————
-# ТАЙМ-АУТЫ
+# ТАЙМ-АУТЫ ДЛЯ АНТИКРАША
 # —————————————————————————————————————————————
 
 
@@ -1118,6 +1142,7 @@ async def on_member_update(
         )
 
 
+
         if anti_crash_actions[admin.id].count(
             "timeout"
         ) >= 3:
@@ -1130,7 +1155,6 @@ async def on_member_update(
 
 
         break
-
 # —————————————————————————————————————————————
 # ЗАПУСК БОТА
 # —————————————————————————————————————————————
