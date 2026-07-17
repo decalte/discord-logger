@@ -41,6 +41,7 @@ COLOR = discord.Color.from_rgb(47, 47, 47)
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
+intents.moderation = True
 intents.messages = True
 intents.message_content = True
 
@@ -404,16 +405,13 @@ async def on_member_update(
     )
 
 #—————————————————————————————————————————————
-# ЛОГИ КИКОВ
+# ЛОГИ КИКОВ И ВЫХОДОВ
 # —————————————————————————————————————————————
 
 @bot.event
 async def on_member_remove(member: discord.Member):
-    log_channel = get_kick_log_channel(member.guild)
-
-    if not log_channel:
-        return
-
+    # Discord использует одно событие и для кика, и для добровольного выхода.
+    # Поэтому сначала проверяем свежую запись о кике в журнале аудита.
     await asyncio.sleep(1)
 
     audit = await find_audit_entry(
@@ -422,52 +420,76 @@ async def on_member_remove(member: discord.Member):
         target_id=member.id
     )
 
-    # Если записи о кике нет, значит пользователь
-    # скорее всего вышел сам
-    if not audit:
+    if audit:
+        log_channel = get_kick_log_channel(member.guild)
+        if not log_channel:
+            return
+
+        moderator = (
+            f"{audit.user.mention}\n"
+            f"ID: `{audit.user.id}`"
+        )
+        reason = audit.reason or "Причина не указана"
+
+        embed = discord.Embed(
+            title="Выгнан пользователь",
+            color=COLOR,
+            timestamp=moscow_time()
+        )
+        embed.add_field(
+            name="Выгнал",
+            value=moderator,
+            inline=False
+        )
+        embed.add_field(
+            name="Пользователя",
+            value=(
+                f"{member.mention}\n"
+                f"ID: `{member.id}`"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="Причина",
+            value=f"> {reason}",
+            inline=False
+        )
+
+        try:
+            await log_channel.send(embed=embed)
+        except discord.HTTPException as error:
+            print(f"Ошибка отправки лога кика: {error}")
         return
 
-    moderator = (
-        f"{audit.user.mention}\n"
-        f"ID: `{audit.user.id}`"
-    )
-
-    reason = audit.reason or "Причина не указана"
+    # Если свежей записи о кике нет — пользователь вышел сам.
+    log_channel = member.guild.get_channel(LEAVE_LOG_CHANNEL_ID)
+    if not log_channel:
+        return
 
     embed = discord.Embed(
-        title="Выгнан пользователь",
+        title="Выход с сервера",
         color=COLOR,
         timestamp=moscow_time()
     )
-
     embed.add_field(
-        name="Выгнал",
-        value=moderator,
-        inline=False
-    )
-
-    embed.add_field(
-        name="Пользователя",
+        name="Пользователь",
         value=(
             f"{member.mention}\n"
             f"ID: `{member.id}`"
         ),
         inline=False
     )
-
     embed.add_field(
-        name="Причина",
-        value=f"> {reason}",
+        name="Дата и время выхода",
+        value=f"> {moscow_time().strftime('%d.%m.%Y %H:%M:%S')} МСК",
         inline=False
     )
 
     try:
         await log_channel.send(embed=embed)
-
     except discord.HTTPException as error:
-        print(
-            f"Ошибка отправки лога кика: {error}"
-        )
+        print(f"Ошибка отправки лога выхода: {error}")
+
 # —————————————————————————————————————————————
 # ЛОГИ БАНОВ
 # —————————————————————————————————————————————
@@ -570,51 +592,6 @@ async def avatar(
 
 
     await interaction.response.send_message(
-        embed=embed
-    )
-
-# —————————————————————————————————————————————
-# ЛОГИ ВЫХОДА С СЕРВЕРА
-# —————————————————————————————————————————————
-
-@bot.event
-async def on_member_remove(member: discord.Member):
-
-    log_channel = bot.get_channel(LEAVE_LOG_CHANNEL_ID)
-
-    if not log_channel:
-        return
-
-
-    left_at = datetime.now().astimezone().strftime(
-        "%B %d, %Y at %I:%M %p"
-    ).replace(" 0", " ")
-
-
-    embed = discord.Embed(
-        title="Выход с сервера",
-        color=0x2F2F2F
-    )
-
-
-    embed.add_field(
-        name="Пользователь",
-        value=(
-            f"{member.mention}\n"
-            f"ID: `{str(member.id)}`"
-        ),
-        inline=False
-    )
-
-
-    embed.add_field(
-        name="Дата и время выхода",
-        value=f"> {left_at}",
-        inline=False
-    )
-
-
-    await log_channel.send(
         embed=embed
     )
 
@@ -1036,43 +1013,44 @@ class AntiCrashView(discord.ui.View):
 # —————————————————————————————————————————————
 
 
-@bot.event
-async def on_member_ban(
-    guild,
-    user
+@bot.listen("on_member_ban")
+async def antichrash_ban_check(
+    guild: discord.Guild,
+    user: discord.User
 ):
+    entry = await find_audit_entry(
+        guild=guild,
+        action=discord.AuditLogAction.ban,
+        target_id=user.id
+    )
 
-    async for entry in guild.audit_logs(
-        limit=1,
-        action=discord.AuditLogAction.ban
-    ):
+    if not entry or not entry.user:
+        return
 
-        admin = entry.user
+    admin = entry.user
 
 
-        anti_crash_actions.setdefault(
-            admin.id,
-            []
+    anti_crash_actions.setdefault(
+        admin.id,
+        []
+    )
+
+
+    anti_crash_actions[admin.id].append(
+        "ban"
+    )
+
+
+    if anti_crash_actions[admin.id].count(
+        "ban"
+    ) >= 2:
+
+
+        await activate_antichrash(
+            admin,
+            "выдача 2-х банов подряд"
         )
 
-
-        anti_crash_actions[admin.id].append(
-            "ban"
-        )
-
-
-        if anti_crash_actions[admin.id].count(
-            "ban"
-        ) >= 2:
-
-
-            await activate_antichrash(
-                admin,
-                "выдача 2-х банов подряд"
-            )
-
-
-        break
 
 
 
@@ -1083,42 +1061,45 @@ async def on_member_ban(
 # —————————————————————————————————————————————
 
 
-@bot.event
-async def on_member_remove(
-    member
+@bot.listen("on_member_remove")
+async def antichrash_kick_check(
+    member: discord.Member
 ):
+    await asyncio.sleep(1)
 
-    async for entry in member.guild.audit_logs(
-        limit=1,
-        action=discord.AuditLogAction.kick
-    ):
+    entry = await find_audit_entry(
+        guild=member.guild,
+        action=discord.AuditLogAction.kick,
+        target_id=member.id
+    )
 
-        admin = entry.user
+    if not entry or not entry.user:
+        return
+
+    admin = entry.user
 
 
-        anti_crash_actions.setdefault(
-            admin.id,
-            []
+    anti_crash_actions.setdefault(
+        admin.id,
+        []
+    )
+
+
+    anti_crash_actions[admin.id].append(
+        "kick"
+    )
+
+
+    if anti_crash_actions[admin.id].count(
+        "kick"
+    ) >= 2:
+
+
+        await activate_antichrash(
+            admin,
+            "выгнал 2-х пользователей с сервера подряд"
         )
 
-
-        anti_crash_actions[admin.id].append(
-            "kick"
-        )
-
-
-        if anti_crash_actions[admin.id].count(
-            "kick"
-        ) >= 2:
-
-
-            await activate_antichrash(
-                admin,
-                "выгнал 2-х пользователей с сервера подряд"
-            )
-
-
-        break
 
 
 
