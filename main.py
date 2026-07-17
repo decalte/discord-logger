@@ -476,9 +476,7 @@ async def on_member_update(
         return
 
     # Тайм-аут выдан или изменён. Формат этого лога оставлен прежним.
-    until = after.timed_out_until.astimezone().strftime(
-        "%B %d, %Y at %I:%M %p"
-    ).replace(" 0", " ")
+    until = format_english_datetime(after.timed_out_until)
 
     embed = discord.Embed(
         title="Выдача тайм-аута",
