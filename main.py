@@ -174,7 +174,7 @@ async def on_message_edit(
         new_content = new_content[:997] + "..."
 
     embed = discord.Embed(
-        title="Измененное сообщение",
+        title="Изменённое сообщение",
         color=COLOR,
         timestamp=moscow_time()
     )
@@ -241,7 +241,7 @@ async def on_message_delete(
         content = content[:997] + "..."
 
     embed = discord.Embed(
-        title="Удаленное сообщение",
+        title="Удалённое сообщение",
         color=COLOR,
         timestamp=moscow_time()
     )
@@ -531,7 +531,21 @@ async def avatar(
         embed=embed
     )
 
+@bot.event
+async def on_ready():
+    await bot.change_presence(
+        status=discord.Status.idle
+    )
 
+    print(f"Бот запущен: {bot.user}")
+
+    try:
+        synced = await bot.tree.sync()
+        print(f"Синхронизировано команд: {len(synced)}")
+
+    except Exception as error:
+        print(f"Ошибка синхронизации: {error}")
+        
 # —————————————————————————————————————————————
 # ЗАПУСК БОТА
 # —————————————————————————————————————————————
