@@ -583,7 +583,6 @@ async def on_member_remove(member: discord.Member):
     embed = discord.Embed(
         title="Выход с сервера",
         color=COLOR,
-        timestamp=moscow_time()
     )
     embed.add_field(
         name="Пользователь",
