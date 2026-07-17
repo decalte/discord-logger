@@ -1200,7 +1200,7 @@ class AntiCrashView(discord.ui.View):
         )
 
         embed.add_field(
-            name="Восстановленные роли",
+            name="Возвращённые роли",
             value=roles_text,
             inline=False
         )
