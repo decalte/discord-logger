@@ -347,7 +347,7 @@ async def on_member_update(
         )
 
         embed.add_field(
-            name="Снял",
+            name="Снял(а)",
             value=moderator,
             inline=False
         )
@@ -379,7 +379,7 @@ async def on_member_update(
     )
 
     embed.add_field(
-        name="Выдал",
+        name="Выдал(а)",
         value=moderator,
         inline=False
     )
@@ -443,7 +443,7 @@ async def on_member_remove(member: discord.Member):
             timestamp=moscow_time()
         )
         embed.add_field(
-            name="Выгнал",
+            name="Выгнал(а)",
             value=moderator,
             inline=False
         )
@@ -535,7 +535,7 @@ async def on_member_ban(
     )
 
     embed.add_field(
-        name="Выдал",
+        name="Выдал(а)",
         value=moderator,
         inline=False
     )
@@ -605,7 +605,7 @@ async def on_member_unban(
     )
 
     embed.add_field(
-        name="Снял",
+        name="Снял(а)",
         value=moderator,
         inline=False
     )
@@ -734,7 +734,7 @@ async def on_guild_channel_create(channel):
 
 
     embed.add_field(
-        name="Создал",
+        name="Создал(а)",
         value=f"{creator}\nID: `{channel.id}`",
         inline=False
     )
@@ -845,7 +845,7 @@ async def on_guild_channel_delete(channel):
 
 
     embed.add_field(
-        name="Удалил",
+        name="Удалил(а)",
         value=f"{deleter}\nID: `{channel.id}`",
         inline=False
     )
@@ -942,7 +942,7 @@ async def activate_antichrash(member, reason):
 
 
         embed.add_field(
-            name="Администратор",
+            name="Администратору",
             value=(
                 f"{member.mention}\n"
                 f"ID: `{str(member.id)}`"
@@ -1077,7 +1077,7 @@ class AntiCrashView(discord.ui.View):
         )
 
         embed.add_field(
-            name="Снял",
+            name="Снял(а)",
             value=(
                 f"{interaction.user.mention}\n"
                 f"ID: `{interaction.user.id}`"
@@ -1086,7 +1086,7 @@ class AntiCrashView(discord.ui.View):
         )
 
         embed.add_field(
-            name="Администратор",
+            name="Администратору",
             value=(
                 f"{member.mention}\n"
                 f"ID: `{member.id}`"
