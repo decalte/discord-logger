@@ -64,6 +64,18 @@ def moscow_time():
     )
 
 
+def format_english_datetime(value: datetime | None = None):
+    """Формат: July 17, 2026 at 7:17 PM."""
+    if value is None:
+        value = moscow_time()
+
+    return value.astimezone(
+        timezone(timedelta(hours=3))
+    ).strftime(
+        "%B %d, %Y at %I:%M %p"
+    ).replace(" 0", " ")
+
+
 def get_message_log_channel(guild: discord.Guild):
     return guild.get_channel(MESSAGE_LOG_CHANNEL_ID)
 
@@ -301,29 +313,14 @@ async def on_member_update(
     before: discord.Member,
     after: discord.Member
 ):
-
     if before.timed_out_until == after.timed_out_until:
         return
 
-
-    if after.timed_out_until is None:
-        return
-
-
-
-    log_channel = bot.get_channel(
-        TIMEOUT_LOG_CHANNEL_ID
-    )
-
-
+    log_channel = get_timeout_log_channel(after.guild)
     if not log_channel:
         return
 
-
-
     await asyncio.sleep(1)
-
-
 
     audit = await find_audit_entry(
         guild=after.guild,
@@ -331,47 +328,61 @@ async def on_member_update(
         target_id=after.id
     )
 
-
-
     if audit:
-
         moderator = (
             f"{audit.user.mention}\n"
             f"ID: `{audit.user.id}`"
         )
-
         reason = audit.reason or "Причина не указана"
-
-
     else:
-
         moderator = "Не удалось определить"
-
         reason = "Причина не указана"
 
+    # Тайм-аут снят.
+    if after.timed_out_until is None:
+        embed = discord.Embed(
+            title="Снятие тайм-аута",
+            color=COLOR,
+            timestamp=moscow_time()
+        )
 
+        embed.add_field(
+            name="Снял",
+            value=moderator,
+            inline=False
+        )
 
+        embed.add_field(
+            name="Пользователю",
+            value=(
+                f"{after.mention}\n"
+                f"ID: `{after.id}`"
+            ),
+            inline=False
+        )
+
+        try:
+            await log_channel.send(embed=embed)
+        except discord.HTTPException as error:
+            print(f"Ошибка отправки лога снятия тайм-аута: {error}")
+        return
+
+    # Тайм-аут выдан или изменён. Формат этого лога оставлен прежним.
     until = after.timed_out_until.astimezone().strftime(
         "%B %d, %Y at %I:%M %p"
     ).replace(" 0", " ")
 
-
-
     embed = discord.Embed(
         title="Выдача тайм-аута",
-        color=0x2F2F2F,
+        color=COLOR,
         timestamp=moscow_time()
     )
-
-
 
     embed.add_field(
         name="Выдал",
         value=moderator,
         inline=False
     )
-
-
 
     embed.add_field(
         name="Пользователю",
@@ -382,15 +393,11 @@ async def on_member_update(
         inline=False
     )
 
-
-
     embed.add_field(
         name="Причина",
         value=f"> {reason}",
         inline=False
     )
-
-
 
     embed.add_field(
         name="До",
@@ -398,11 +405,10 @@ async def on_member_update(
         inline=False
     )
 
-
-
-    await log_channel.send(
-        embed=embed
-    )
+    try:
+        await log_channel.send(embed=embed)
+    except discord.HTTPException as error:
+        print(f"Ошибка отправки лога тайм-аута: {error}")
 
 #—————————————————————————————————————————————
 # ЛОГИ КИКОВ И ВЫХОДОВ
@@ -481,7 +487,7 @@ async def on_member_remove(member: discord.Member):
     )
     embed.add_field(
         name="Дата и время выхода",
-        value=f"> {moscow_time().strftime('%d.%m.%Y %H:%M:%S')} МСК",
+        value=f"> {format_english_datetime()}",
         inline=False
     )
 
@@ -563,6 +569,63 @@ async def on_member_ban(
             f"Ошибка отправки лога бана: {error}"
         )
 # —————————————————————————————————————————————
+# ЛОГИ СНЯТИЯ БАНА
+# —————————————————————————————————————————————
+
+@bot.event
+async def on_member_unban(
+    guild: discord.Guild,
+    user: discord.User
+):
+    log_channel = get_ban_log_channel(guild)
+
+    if not log_channel:
+        return
+
+    await asyncio.sleep(1)
+
+    audit = await find_audit_entry(
+        guild=guild,
+        action=discord.AuditLogAction.unban,
+        target_id=user.id
+    )
+
+    if audit:
+        moderator = (
+            f"{audit.user.mention}\n"
+            f"ID: `{audit.user.id}`"
+        )
+    else:
+        moderator = "Не удалось определить"
+
+    embed = discord.Embed(
+        title="Снятие бана",
+        color=COLOR,
+        timestamp=moscow_time()
+    )
+
+    embed.add_field(
+        name="Снял",
+        value=moderator,
+        inline=False
+    )
+
+    embed.add_field(
+        name="Пользователю",
+        value=(
+            f"{user.mention}\n"
+            f"ID: `{user.id}`"
+        ),
+        inline=False
+    )
+
+    try:
+        await log_channel.send(embed=embed)
+    except discord.HTTPException as error:
+        print(f"Ошибка отправки лога снятия бана: {error}")
+
+
+# —————————————————————————————————————————————
 # КОМАНДА /AVATAR
 # —————————————————————————————————————————————
 
@@ -582,7 +645,7 @@ async def avatar(
 
     embed = discord.Embed(
         title=f"Аватар — {user.name}",
-        color=0x2F2F2F
+        color=COLOR
     )
 
 
@@ -666,7 +729,7 @@ async def on_guild_channel_create(channel):
 
     embed = discord.Embed(
         title=title,
-        color=0x2F2F2F
+        color=COLOR
     )
 
 
@@ -695,7 +758,7 @@ async def on_guild_channel_create(channel):
 
     embed.add_field(
         name="Дата и время создания",
-        value=f"> {discord.utils.format_dt(channel.created_at, style='F')}",
+        value=f"> {format_english_datetime(channel.created_at)}",
         inline=False
     )
 
@@ -776,7 +839,7 @@ async def on_guild_channel_delete(channel):
 
     embed = discord.Embed(
         title=title,
-        color=0x2F2F2F
+        color=COLOR
     )
 
 
@@ -809,7 +872,7 @@ async def on_guild_channel_delete(channel):
 
     embed.add_field(
         name="Дата и время удаления",
-        value=f"> {discord.utils.format_dt(discord.utils.utcnow(), style='F')}",
+        value=f"> {format_english_datetime()}",
         inline=False
     )
 
@@ -874,7 +937,7 @@ async def activate_antichrash(member, reason):
 
         embed = discord.Embed(
             title="Выдача антикраша",
-            color=0x2F2F2F
+            color=COLOR
         )
 
 
@@ -897,10 +960,7 @@ async def activate_antichrash(member, reason):
 
         embed.add_field(
             name="Дата и время выдачи антикраша",
-            value=discord.utils.format_dt(
-                discord.utils.utcnow(),
-                style="F"
-            ),
+            value=f"> {format_english_datetime()}",
             inline=False
         )
 
@@ -959,13 +1019,6 @@ class AntiCrashView(discord.ui.View):
 
 
 
-        # Сразу подтверждаем взаимодействие, чтобы Discord не счёл кнопку
-        # просроченной, пока бот возвращает роли.
-        await interaction.response.defer(
-            ephemeral=False
-        )
-
-
         anti_role = interaction.guild.get_role(
             ANTI_CRASH_ROLE_ID
         )
@@ -985,8 +1038,6 @@ class AntiCrashView(discord.ui.View):
             []
         )
 
-        restored_roles = []
-
 
         for role_id in roles:
 
@@ -996,38 +1047,46 @@ class AntiCrashView(discord.ui.View):
 
             if role:
 
-                try:
-                    await member.add_roles(
-                        role
-                    )
-                    restored_roles.append(role)
-                except (discord.Forbidden, discord.HTTPException):
-                    # Роль может находиться выше роли бота или быть недоступна.
-                    pass
+                await member.add_roles(
+                    role
+                )
 
 
+
+        restored_roles = []
+
+        for role_id in roles:
+            role = interaction.guild.get_role(role_id)
+            if role:
+                restored_roles.append(role.mention)
 
         anti_crash_roles.pop(
             member.id,
             None
         )
 
-
-        returned_roles = (
-            " ".join(role.mention for role in restored_roles)
+        roles_text = (
+            "\n".join(f"> {role}" for role in restored_roles)
             if restored_roles
-            else "Роли не возвращены"
+            else "> Роли отсутствуют"
         )
-
 
         embed = discord.Embed(
             title="Снятие антикраша",
-            color=0x2F2F2F
+            color=COLOR
         )
 
+        embed.add_field(
+            name="Снял",
+            value=(
+                f"{interaction.user.mention}\n"
+                f"ID: `{interaction.user.id}`"
+            ),
+            inline=False
+        )
 
         embed.add_field(
-            name="Администратор",
+            name="Администратору",
             value=(
                 f"{member.mention}\n"
                 f"ID: `{member.id}`"
@@ -1035,28 +1094,20 @@ class AntiCrashView(discord.ui.View):
             inline=False
         )
 
-
         embed.add_field(
-            name="Возвращенные роли",
-            value=returned_roles,
+            name="Восстановленные роли",
+            value=roles_text,
             inline=False
         )
-
 
         embed.add_field(
             name="Дата и время снятия антикраша",
-            value=discord.utils.format_dt(
-                discord.utils.utcnow(),
-                style="F"
-            ),
+            value=f"> {format_english_datetime()}",
             inline=False
         )
 
-
-        # Публичное сообщение: его видят все участники канала.
-        await interaction.followup.send(
-            embed=embed,
-            ephemeral=False
+        await interaction.response.send_message(
+            embed=embed
         )
 
 
@@ -1244,3 +1295,4 @@ async def on_ready():
 
 if __name__ == "__main__":
     bot.run(TOKEN)
+
