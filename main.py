@@ -587,14 +587,18 @@ async def on_member_remove(member: discord.Member):
 # ЛОГИ СОЗДАНИЯ И УДАЛЕНИЯ КАНАЛОВ
 # —————————————————————————————————————————————
 
+
 @bot.event
 async def on_guild_channel_create(channel):
-    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+
+    log_channel = bot.get_channel(CHANNEL_LOG_CHANNEL_ID)
 
     if log_channel is None:
         return
 
+
     creator = "Неизвестно"
+
 
     async for entry in channel.guild.audit_logs(
         limit=5,
@@ -604,26 +608,55 @@ async def on_guild_channel_create(channel):
             creator = entry.user.mention
             break
 
+
+
+    if isinstance(channel, discord.TextChannel):
+        title = "Создан текстовый канал"
+        name_title = "Название канала"
+
+    elif isinstance(channel, discord.VoiceChannel):
+        title = "Создан голосовой канал"
+        name_title = "Название канала"
+
+    elif isinstance(channel, discord.CategoryChannel):
+        title = "Создана категория для каналов"
+        name_title = "Название категории"
+
+    else:
+        title = "Создан канал"
+        name_title = "Название канала"
+
+
+
     permissions = []
 
+
     for role in channel.guild.roles:
+
         overwrite = channel.overwrites_for(role)
 
         if overwrite.view_channel is True:
             permissions.append(role.mention)
 
+
+
     if not permissions:
         permissions.append("@everyone")
+
+
 
     perms_text = "\n".join(
         f"│ {role}"
         for role in permissions
     )
 
+
+
     embed = discord.Embed(
-        title="Создание канала",
+        title=title,
         color=0x2F2F2F
     )
+
 
     embed.add_field(
         name="Создал",
@@ -631,17 +664,22 @@ async def on_guild_channel_create(channel):
         inline=False
     )
 
+
     embed.add_field(
-        name="Название канала",
+        name=name_title,
         value=f"│ {channel.name}",
         inline=False
     )
 
-    embed.add_field(
-        name="Права канала",
-        value=perms_text,
-        inline=False
-    )
+
+    if not isinstance(channel, discord.CategoryChannel):
+
+        embed.add_field(
+            name="Права канала",
+            value=perms_text,
+            inline=False
+        )
+
 
     embed.add_field(
         name="Дата и время создания",
@@ -649,19 +687,22 @@ async def on_guild_channel_create(channel):
         inline=False
     )
 
+
     await log_channel.send(
         embed=embed
     )
 
 
 
+
 @bot.event
 async def on_guild_channel_delete(channel):
 
-    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    log_channel = bot.get_channel(CHANNEL_LOG_CHANNEL_ID)
 
     if log_channel is None:
         return
+
 
 
     deleter = "Неизвестно"
@@ -671,10 +712,29 @@ async def on_guild_channel_delete(channel):
         limit=5,
         action=discord.AuditLogAction.channel_delete
     ):
-
         if entry.target.id == channel.id:
             deleter = entry.user.mention
             break
+
+
+
+
+    if isinstance(channel, discord.TextChannel):
+        title = "Удален текстовый канал"
+        name_title = "Название канала"
+
+    elif isinstance(channel, discord.VoiceChannel):
+        title = "Удален голосовой канал"
+        name_title = "Название канала"
+
+    elif isinstance(channel, discord.CategoryChannel):
+        title = "Удалена категория для каналов"
+        name_title = "Название категории"
+
+    else:
+        title = "Удален канал"
+        name_title = "Название канала"
+
 
 
 
@@ -701,9 +761,10 @@ async def on_guild_channel_delete(channel):
 
 
     embed = discord.Embed(
-        title="Удаление канала",
+        title=title,
         color=0x2F2F2F
     )
+
 
 
     embed.add_field(
@@ -713,18 +774,23 @@ async def on_guild_channel_delete(channel):
     )
 
 
+
     embed.add_field(
-        name="Название канала",
+        name=name_title,
         value=f"│ {channel.name}",
         inline=False
     )
 
 
-    embed.add_field(
-        name="Права канала",
-        value=perms_text,
-        inline=False
-    )
+
+    if not isinstance(channel, discord.CategoryChannel):
+
+        embed.add_field(
+            name="Права канала",
+            value=perms_text,
+            inline=False
+        )
+
 
 
     embed.add_field(
@@ -732,6 +798,7 @@ async def on_guild_channel_delete(channel):
         value=f"│ {discord.utils.format_dt(discord.utils.utcnow(), style='F')}",
         inline=False
     )
+
 
 
     await log_channel.send(
@@ -785,7 +852,7 @@ async def activate_antichrash(member, reason):
 
 
 
-    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    log_channel = bot.get_channel(ANTI_CRASH_LOG_CHANNEL_ID)
 
 
     if log_channel:
