@@ -290,6 +290,7 @@ async def on_message(message: discord.Message):
         return
 
     await bot.process_commands(message)    
+
 # —————————————————————————————————————————————
 # ЛОГИ ТАЙМ-АУТОВ
 # —————————————————————————————————————————————
@@ -299,18 +300,29 @@ async def on_member_update(
     before: discord.Member,
     after: discord.Member
 ):
+
     if before.timed_out_until == after.timed_out_until:
         return
+
 
     if after.timed_out_until is None:
         return
 
-    log_channel = get_timeout_log_channel(after.guild)
+
+
+    log_channel = bot.get_channel(
+        TIMEOUT_LOG_CHANNEL_ID
+    )
+
 
     if not log_channel:
         return
 
+
+
     await asyncio.sleep(1)
+
+
 
     audit = await find_audit_entry(
         guild=after.guild,
@@ -318,29 +330,47 @@ async def on_member_update(
         target_id=after.id
     )
 
+
+
     if audit:
+
         moderator = (
             f"{audit.user.mention}\n"
             f"ID: `{audit.user.id}`"
         )
+
         reason = audit.reason or "Причина не указана"
+
+
     else:
+
         moderator = "Не удалось определить"
+
         reason = "Причина не указана"
 
-    until = after.timed_out_until.astimezone().strftime("%B %d, %Y at %I:%M %p").replace(" 0", " ")
+
+
+    until = after.timed_out_until.astimezone().strftime(
+        "%B %d, %Y at %I:%M %p"
+    ).replace(" 0", " ")
+
+
 
     embed = discord.Embed(
         title="Выдача тайм-аута",
-        color=COLOR,
+        color=0x2F2F2F,
         timestamp=moscow_time()
     )
+
+
 
     embed.add_field(
         name="Выдал",
         value=moderator,
         inline=False
     )
+
+
 
     embed.add_field(
         name="Пользователю",
@@ -351,11 +381,15 @@ async def on_member_update(
         inline=False
     )
 
+
+
     embed.add_field(
         name="Причина",
         value=f"> {reason}",
         inline=False
     )
+
+
 
     embed.add_field(
         name="До",
@@ -363,7 +397,12 @@ async def on_member_update(
         inline=False
     )
 
-    await log_channel.send(embed=embed)
+
+
+    await log_channel.send(
+        embed=embed
+    )
+
 #—————————————————————————————————————————————
 # ЛОГИ КИКОВ
 # —————————————————————————————————————————————
@@ -545,7 +584,6 @@ async def on_ready():
 
     except Exception as error:
         print(f"Ошибка синхронизации: {error}")
-
 
 # —————————————————————————————————————————————
 # ЛОГИ ВЫХОДА С СЕРВЕРА
@@ -1102,11 +1140,10 @@ async def on_member_remove(
 # ТАЙМ-АУТЫ ДЛЯ АНТИКРАША
 # —————————————————————————————————————————————
 
-
-@bot.event
-async def on_member_update(
-    before,
-    after
+@bot.listen("on_member_update")
+async def antichrash_timeout_check(
+    before: discord.Member,
+    after: discord.Member
 ):
 
     if before.timed_out_until == after.timed_out_until:
@@ -1118,43 +1155,56 @@ async def on_member_update(
 
 
 
-    async for entry in after.guild.audit_logs(
-        limit=1,
-        action=discord.AuditLogAction.member_update
-    ):
-
-        admin = entry.user
-
-
-        if admin.bot:
-            return
+    await asyncio.sleep(1)
 
 
 
-        anti_crash_actions.setdefault(
-            admin.id,
-            []
+    audit = await find_audit_entry(
+        guild=after.guild,
+        action=discord.AuditLogAction.member_update,
+        target_id=after.id
+    )
+
+
+    if audit is None:
+        return
+
+
+
+    admin = audit.user
+
+
+
+    if admin.bot:
+        return
+
+
+
+    anti_crash_actions.setdefault(
+        admin.id,
+        []
+    )
+
+
+    anti_crash_actions[admin.id].append(
+        "timeout"
+    )
+
+
+
+    if anti_crash_actions[admin.id].count(
+        "timeout"
+    ) >= 3:
+
+
+        await activate_antichrash(
+            admin,
+            "выдача 3-х тайм-аутов подряд"
         )
 
 
-        anti_crash_actions[admin.id].append(
-            "timeout"
-        )
+        anti_crash_actions[admin.id] = []
 
-
-
-        if anti_crash_actions[admin.id].count(
-            "timeout"
-        ) >= 3:
-
-
-            await activate_antichrash(
-                admin,
-                "выдача 3-х тайм-аутов подряд"
-            )
-
-
-        break
 # —————————————————————————————————————————————
 # ЗАПУСК БОТА
 # —————————————————————————————————————————————
