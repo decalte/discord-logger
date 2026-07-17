@@ -897,8 +897,9 @@ async def activate_antichrash(member, reason):
 
         embed.add_field(
             name="Дата и время выдачи антикраша",
-            value=(
-                f"> {datetime.now(timezone.utc).strftime('%d %B %Y в %H:%M')}"
+            value=discord.utils.format_dt(
+                discord.utils.utcnow(),
+                style="F"
             ),
             inline=False
         )
@@ -958,6 +959,13 @@ class AntiCrashView(discord.ui.View):
 
 
 
+        # Сразу подтверждаем взаимодействие, чтобы Discord не счёл кнопку
+        # просроченной, пока бот возвращает роли.
+        await interaction.response.defer(
+            ephemeral=False
+        )
+
+
         anti_role = interaction.guild.get_role(
             ANTI_CRASH_ROLE_ID
         )
@@ -977,6 +985,8 @@ class AntiCrashView(discord.ui.View):
             []
         )
 
+        restored_roles = []
+
 
         for role_id in roles:
 
@@ -986,9 +996,14 @@ class AntiCrashView(discord.ui.View):
 
             if role:
 
-                await member.add_roles(
-                    role
-                )
+                try:
+                    await member.add_roles(
+                        role
+                    )
+                    restored_roles.append(role)
+                except (discord.Forbidden, discord.HTTPException):
+                    # Роль может находиться выше роли бота или быть недоступна.
+                    pass
 
 
 
@@ -998,10 +1013,50 @@ class AntiCrashView(discord.ui.View):
         )
 
 
+        returned_roles = (
+            " ".join(role.mention for role in restored_roles)
+            if restored_roles
+            else "Роли не возвращены"
+        )
 
-        await interaction.response.send_message(
-            "Антикраш снят. Роли восстановлены.",
-            ephemeral=True
+
+        embed = discord.Embed(
+            title="Снятие антикраша",
+            color=0x2F2F2F
+        )
+
+
+        embed.add_field(
+            name="Администратор",
+            value=(
+                f"{member.mention}\n"
+                f"ID: `{member.id}`"
+            ),
+            inline=False
+        )
+
+
+        embed.add_field(
+            name="Возвращенные роли",
+            value=returned_roles,
+            inline=False
+        )
+
+
+        embed.add_field(
+            name="Дата и время снятия антикраша",
+            value=discord.utils.format_dt(
+                discord.utils.utcnow(),
+                style="F"
+            ),
+            inline=False
+        )
+
+
+        # Публичное сообщение: его видят все участники канала.
+        await interaction.followup.send(
+            embed=embed,
+            ephemeral=False
         )
 
 
