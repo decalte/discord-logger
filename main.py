@@ -468,7 +468,7 @@ async def on_member_remove(member: discord.Member):
         print(
             f"Ошибка отправки лога кика: {error}"
         )
-        # —————————————————————————————————————————————
+# —————————————————————————————————————————————
 # ЛОГИ БАНОВ
 # —————————————————————————————————————————————
 
@@ -540,7 +540,7 @@ async def on_member_ban(
         print(
             f"Ошибка отправки лога бана: {error}"
         )
-        # —————————————————————————————————————————————
+# —————————————————————————————————————————————
 # КОМАНДА /AVATAR
 # —————————————————————————————————————————————
 
@@ -553,37 +553,25 @@ async def avatar(
     interaction: discord.Interaction,
     user: discord.Member | None = None
 ):
+
     if user is None:
         user = interaction.user
 
+
     embed = discord.Embed(
-       title=f"Аватар — {user.name}",
-        color=COLOR,
-        timestamp=moscow_time()
+        title=f"Аватар — {user.name}",
+        color=0x2F2F2F
     )
+
 
     embed.set_image(
         url=user.display_avatar.url
     )
 
+
     await interaction.response.send_message(
         embed=embed
     )
-
-@bot.event
-async def on_ready():
-    await bot.change_presence(
-        status=discord.Status.idle
-    )
-
-    print(f"Бот запущен: {bot.user}")
-
-    try:
-        synced = await bot.tree.sync()
-        print(f"Синхронизировано команд: {len(synced)}")
-
-    except Exception as error:
-        print(f"Ошибка синхронизации: {error}")
 
 # —————————————————————————————————————————————
 # ЛОГИ ВЫХОДА С СЕРВЕРА
