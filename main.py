@@ -1193,6 +1193,15 @@ async def antichrash_timeout_check(
 
         anti_crash_actions[admin.id] = []
 
+@bot.event
+async def on_ready():
+
+    await bot.change_presence(
+        status=discord.Status.idle
+    )
+
+    print(f"Бот запущен: {bot.user}")
+
 # —————————————————————————————————————————————
 # ЗАПУСК БОТА
 # —————————————————————————————————————————————
