@@ -518,7 +518,7 @@ async def avatar(
         user = interaction.user
 
     embed = discord.Embed(
-        title=f"Аватар {user}",
+       title=f"Аватар — {user.name}",
         color=COLOR,
         timestamp=moscow_time()
     )
