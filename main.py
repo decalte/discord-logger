@@ -343,7 +343,7 @@ async def on_member_update(
     )
 
     embed.add_field(
-        name="Пользователь",
+        name="Пользователю",
         value=(
             f"{after.mention}\n"
             f"ID: `{after.id}`"
@@ -408,7 +408,7 @@ async def on_member_remove(member: discord.Member):
     )
 
     embed.add_field(
-        name="Пользователь",
+        name="Пользователя",
         value=(
             f"{member.mention}\n"
             f"ID: `{member.id}`"
@@ -474,7 +474,7 @@ async def on_member_ban(
     )
 
     embed.add_field(
-        name="Пользователь",
+        name="Пользователю",
         value=(
             f"{user.mention}\n"
             f"ID: `{user.id}`"
