@@ -841,7 +841,7 @@ async def on_guild_channel_create(channel):
 
 
     embed.add_field(
-        name="Создал",
+        name="Создал(а)",
         value=f"{creator}\nID: `{channel.id}`",
         inline=False
     )
@@ -952,7 +952,7 @@ async def on_guild_channel_delete(channel):
 
 
     embed.add_field(
-        name="Удалил",
+        name="Удалил(а)",
         value=f"{deleter}\nID: `{channel.id}`",
         inline=False
     )
