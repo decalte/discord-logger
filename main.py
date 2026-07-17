@@ -22,6 +22,9 @@ MESSAGE_LOG_CHANNEL_ID = 1527284881351118960
 TIMEOUT_LOG_CHANNEL_ID = 1527340102861197423
 KICK_LOG_CHANNEL_ID = 1527340314912886865
 BAN_LOG_CHANNEL_ID = 1527340343476093069
+LEAVE_LOG_CHANNEL_ID = 1527694442998403172
+ANTICRASH_LOG_CHANNEL_ID = 1527478400728694865
+CHANNEL_LOG_CHANNEL_ID = 1527681524416123020
 
 
 # —————————————————————————————————————————————
@@ -325,10 +328,7 @@ async def on_member_update(
         moderator = "Не удалось определить"
         reason = "Причина не указана"
 
-    until = discord.utils.format_dt(
-        after.timed_out_until,
-        style="F"
-    )
+    until = after.timed_out_until.astimezone().strftime("%B %d, %Y at %I:%M %p").replace(" 0", " ")
 
     embed = discord.Embed(
         title="Выдача тайм-аута",
@@ -364,7 +364,7 @@ async def on_member_update(
     )
 
     await log_channel.send(embed=embed)
-    # —————————————————————————————————————————————
+#—————————————————————————————————————————————
 # ЛОГИ КИКОВ
 # —————————————————————————————————————————————
 
@@ -545,7 +545,525 @@ async def on_ready():
 
     except Exception as error:
         print(f"Ошибка синхронизации: {error}")
-        
+
+# —————————————————————————————————————————————
+# ЛОГИ ВЫХОДА С СЕРВЕРА
+# —————————————————————————————————————————————
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    log_channel = get_leave_log_channel(member.guild)
+
+    if not log_channel:
+        return
+
+    left_at = datetime.now().astimezone().strftime("%B %d, %Y at %I:%M %p").replace(" 0", " ")
+
+    embed = discord.Embed(
+        title="Выход с сервера",
+        color=0x2F2F2F
+    )
+
+    embed.add_field(
+        name="Пользователь",
+        value=(
+            f"{member.mention}\n"
+            f"ID: `{member.id}`"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="Дата и время выхода",
+        value=f"> {left_at}",
+        inline=False
+    )
+
+    await log_channel.send(
+        embed=embed
+    )
+
+# —————————————————————————————————————————————
+# ЛОГИ СОЗДАНИЯ И УДАЛЕНИЯ КАНАЛОВ
+# —————————————————————————————————————————————
+
+@bot.event
+async def on_guild_channel_create(channel):
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+
+    if log_channel is None:
+        return
+
+    creator = "Неизвестно"
+
+    async for entry in channel.guild.audit_logs(
+        limit=5,
+        action=discord.AuditLogAction.channel_create
+    ):
+        if entry.target.id == channel.id:
+            creator = entry.user.mention
+            break
+
+    permissions = []
+
+    for role in channel.guild.roles:
+        overwrite = channel.overwrites_for(role)
+
+        if overwrite.view_channel is True:
+            permissions.append(role.mention)
+
+    if not permissions:
+        permissions.append("@everyone")
+
+    perms_text = "\n".join(
+        f"│ {role}"
+        for role in permissions
+    )
+
+    embed = discord.Embed(
+        title="Создание канала",
+        color=0x2F2F2F
+    )
+
+    embed.add_field(
+        name="Создал",
+        value=f"{creator}\nID: {channel.id}",
+        inline=False
+    )
+
+    embed.add_field(
+        name="Название канала",
+        value=f"│ {channel.name}",
+        inline=False
+    )
+
+    embed.add_field(
+        name="Права канала",
+        value=perms_text,
+        inline=False
+    )
+
+    embed.add_field(
+        name="Дата и время создания",
+        value=f"│ {discord.utils.format_dt(channel.created_at, style='F')}",
+        inline=False
+    )
+
+    await log_channel.send(
+        embed=embed
+    )
+
+
+
+@bot.event
+async def on_guild_channel_delete(channel):
+
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+
+    if log_channel is None:
+        return
+
+
+    deleter = "Неизвестно"
+
+
+    async for entry in channel.guild.audit_logs(
+        limit=5,
+        action=discord.AuditLogAction.channel_delete
+    ):
+
+        if entry.target.id == channel.id:
+            deleter = entry.user.mention
+            break
+
+
+
+    permissions = []
+
+
+    for role, overwrite in channel.overwrites.items():
+
+        if overwrite.view_channel is True:
+            permissions.append(role.mention)
+
+
+
+    if not permissions:
+        permissions.append("@everyone")
+
+
+
+    perms_text = "\n".join(
+        f"│ {role}"
+        for role in permissions
+    )
+
+
+
+    embed = discord.Embed(
+        title="Удаление канала",
+        color=0x2F2F2F
+    )
+
+
+    embed.add_field(
+        name="Удалил",
+        value=f"{deleter}\nID: {channel.id}",
+        inline=False
+    )
+
+
+    embed.add_field(
+        name="Название канала",
+        value=f"│ {channel.name}",
+        inline=False
+    )
+
+
+    embed.add_field(
+        name="Права канала",
+        value=perms_text,
+        inline=False
+    )
+
+
+    embed.add_field(
+        name="Дата и время удаления",
+        value=f"│ {discord.utils.format_dt(discord.utils.utcnow(), style='F')}",
+        inline=False
+    )
+
+
+    await log_channel.send(
+        embed=embed
+    )
+
+# —————————————————————————————————————————————
+# АНТИКРАШ
+# —————————————————————————————————————————————
+
+from datetime import datetime, timezone
+import discord
+
+
+ANTI_CRASH_ROLE_ID = 1527476785590177903
+
+
+# сохранение ролей пользователей
+anti_crash_roles = {}
+
+# счётчик действий
+anti_crash_actions = {}
+
+
+
+async def activate_antichrash(member, reason):
+
+    if member.id in anti_crash_roles:
+        return
+
+
+    # сохраняем роли
+    anti_crash_roles[member.id] = [
+        role.id
+        for role in member.roles
+        if role != member.guild.default_role
+    ]
+
+
+    # снимаем все роли
+    await member.edit(roles=[])
+
+
+    # выдаём роль антикраша
+    anti_role = member.guild.get_role(
+        ANTI_CRASH_ROLE_ID
+    )
+
+    if anti_role:
+        await member.add_roles(anti_role)
+
+
+
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+
+
+    if log_channel:
+
+        embed = discord.Embed(
+            title="Выдача антикраша",
+            color=0x2F2F2F
+        )
+
+
+        embed.add_field(
+            name="Администратору",
+            value=f"{member.mention}\nID: {member.id}",
+            inline=False
+        )
+
+
+        embed.add_field(
+            name="Причина выдачи",
+            value=f"│ {reason}",
+            inline=False
+        )
+
+
+        embed.add_field(
+            name="Дата и время выдачи антикраша",
+            value=f"│ {datetime.now(timezone.utc).strftime('%d %B %Y в %H:%M')}",
+            inline=False
+        )
+
+
+        await log_channel.send(
+            embed=embed,
+            view=AntiCrashView(member.id)
+        )
+
+
+
+
+
+# —————————————————————————————————————————————
+# КНОПКА СНЯТИЯ АНТИКРАША
+# —————————————————————————————————————————————
+
+
+class AntiCrashView(discord.ui.View):
+
+    def __init__(self, member_id):
+        super().__init__(
+            timeout=None
+        )
+
+        self.member_id = member_id
+
+
+
+    @discord.ui.button(
+        label="Снять антикраш",
+        style=discord.ButtonStyle.secondary,
+        custom_id="remove_antichrash"
+    )
+    async def remove_antichrash(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+
+        member = interaction.guild.get_member(
+            self.member_id
+        )
+
+
+        if member is None:
+            await interaction.response.send_message(
+                "Пользователь не найден",
+                ephemeral=True
+            )
+            return
+
+
+
+        # убрать антикраш роль
+        anti_role = interaction.guild.get_role(
+            ANTI_CRASH_ROLE_ID
+        )
+
+
+        if anti_role:
+            await member.remove_roles(
+                anti_role
+            )
+
+
+
+        # вернуть старые роли
+        roles = anti_crash_roles.get(
+            member.id,
+            []
+        )
+
+
+        for role_id in roles:
+
+            role = interaction.guild.get_role(
+                role_id
+            )
+
+            if role:
+                await member.add_roles(
+                    role
+                )
+
+
+        anti_crash_roles.pop(
+            member.id,
+            None
+        )
+
+
+        await interaction.response.send_message(
+            "Антикраш снят. Роли восстановлены.",
+            ephemeral=True
+        )
+
+
+
+
+# —————————————————————————————————————————————
+# БАНЫ
+# —————————————————————————————————————————————
+
+
+@bot.event
+async def on_member_ban(
+    guild,
+    user
+):
+
+    async for entry in guild.audit_logs(
+        limit=1,
+        action=discord.AuditLogAction.ban
+    ):
+
+        admin = entry.user
+
+
+        anti_crash_actions.setdefault(
+            admin.id,
+            []
+        )
+
+
+        anti_crash_actions[admin.id].append(
+            "ban"
+        )
+
+
+        if anti_crash_actions[admin.id].count(
+            "ban"
+        ) >= 2:
+
+
+            await activate_antichrash(
+                admin,
+                "выдача 2-х банов подряд"
+            )
+
+
+        break
+
+
+
+
+
+# —————————————————————————————————————————————
+# КИКИ
+# —————————————————————————————————————————————
+
+
+@bot.event
+async def on_member_remove(
+    member
+):
+
+    async for entry in member.guild.audit_logs(
+        limit=1,
+        action=discord.AuditLogAction.kick
+    ):
+
+        admin = entry.user
+
+
+        anti_crash_actions.setdefault(
+            admin.id,
+            []
+        )
+
+
+        anti_crash_actions[admin.id].append(
+            "kick"
+        )
+
+
+        if anti_crash_actions[admin.id].count(
+            "kick"
+        ) >= 2:
+
+
+            await activate_antichrash(
+                admin,
+                "выгнал 2-х пользователей с сервера подряд"
+            )
+
+
+        break
+
+
+
+
+
+# —————————————————————————————————————————————
+# ТАЙМ-АУТЫ
+# —————————————————————————————————————————————
+
+
+@bot.event
+async def on_member_update(
+    before,
+    after
+):
+
+    if before.timed_out_until == after.timed_out_until:
+        return
+
+
+    if after.timed_out_until is None:
+        return
+
+
+
+    async for entry in after.guild.audit_logs(
+        limit=1,
+        action=discord.AuditLogAction.member_update
+    ):
+
+        admin = entry.user
+
+
+        if admin.bot:
+            return
+
+
+
+        anti_crash_actions.setdefault(
+            admin.id,
+            []
+        )
+
+
+        anti_crash_actions[admin.id].append(
+            "timeout"
+        )
+
+
+        if anti_crash_actions[admin.id].count(
+            "timeout"
+        ) >= 3:
+
+
+            await activate_antichrash(
+                admin,
+                "выдача 3-х тайм-аутов подряд"
+            )
+
+
+        break
+
 # —————————————————————————————————————————————
 # ЗАПУСК БОТА
 # —————————————————————————————————————————————
