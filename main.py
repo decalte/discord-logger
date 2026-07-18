@@ -19,6 +19,7 @@ TOKEN = os.getenv("TOKEN")
 # —————————————————————————————————————————————
 
 MESSAGE_LOG_CHANNEL_ID = 1527284881351118960
+ROLE_LOG_CHANNEL_ID = 0  # Вставь сюда ID канала «логи-ролей»
 TIMEOUT_LOG_CHANNEL_ID = 1527340102861197423
 KICK_LOG_CHANNEL_ID = 1527340314912886865
 BAN_LOG_CHANNEL_ID = 1527340343476093069
@@ -26,6 +27,7 @@ LEAVE_LOG_CHANNEL_ID = 1527694442998403172
 ANTICRASH_LOG_CHANNEL_ID = 1527478400728694865
 CHANNEL_LOG_CHANNEL_ID = 1527681524416123020
 VOICE_CHANNEL_ID = 1527411803032780960
+ROLE_LOG_CHANNEL_ID = 1527838995302580315
 
 # Защита от одновременных попыток подключения из on_ready, watchdog и событий.
 voice_connection_lock = asyncio.Lock()
@@ -82,6 +84,12 @@ def format_english_datetime(value: datetime | None = None):
 
 def get_message_log_channel(guild: discord.Guild):
     return guild.get_channel(MESSAGE_LOG_CHANNEL_ID)
+
+
+def get_role_log_channel(guild: discord.Guild):
+    if not ROLE_LOG_CHANNEL_ID:
+        return None
+    return guild.get_channel(ROLE_LOG_CHANNEL_ID)
 
 
 def get_timeout_log_channel(guild: discord.Guild):
@@ -344,6 +352,54 @@ async def on_message_edit(
 # ЛОГИ УДАЛЁННЫХ СООБЩЕНИЙ
 # —————————————————————————————————————————————
 
+async def find_message_deleter(message: discord.Message):
+    """Возвращает модератора, удалившего чужое сообщение.
+
+    Обычное удаление собственного сообщения не создаёт запись в журнале
+    аудита, поэтому в таком случае функция возвращает None.
+    """
+    # Запись в журнале аудита иногда появляется немного позже события.
+    await asyncio.sleep(1)
+
+    try:
+        async for entry in message.guild.audit_logs(
+            limit=8,
+            action=discord.AuditLogAction.message_delete
+        ):
+            if not entry.target or entry.target.id != message.author.id:
+                continue
+
+            audit_channel = getattr(entry.extra, "channel", None)
+            if audit_channel and audit_channel.id != message.channel.id:
+                continue
+
+            age = (
+                datetime.now(timezone.utc) - entry.created_at
+            ).total_seconds()
+
+            if age > 10:
+                continue
+
+            # Если автор и исполнитель совпадают, отдельное поле не нужно.
+            if entry.user.id == message.author.id:
+                return None
+
+            return entry.user
+
+    except discord.Forbidden:
+        print(
+            f"Нет права на просмотр журнала аудита "
+            f"на сервере: {message.guild.name}"
+        )
+
+    except discord.HTTPException as error:
+        print(
+            f"Ошибка получения журнала аудита удаления сообщения: {error}"
+        )
+
+    return None
+
+
 @bot.event
 async def on_message_delete(
     message: discord.Message
@@ -364,20 +420,41 @@ async def on_message_delete(
     if len(content) > 1000:
         content = content[:997] + "..."
 
+    deleter = await find_message_deleter(message)
+
     embed = discord.Embed(
         title="Удалённое сообщение",
         color=COLOR,
         timestamp=moscow_time()
     )
 
-    embed.add_field(
-        name="Пользователь",
-        value=(
-            f"{message.author.mention}\n"
-            f"ID: `{message.author.id}`"
-        ),
-        inline=False
-    )
+    if deleter:
+        embed.add_field(
+            name="Удалил(а)",
+            value=(
+                f"{deleter.mention}\n"
+                f"ID: `{deleter.id}`"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="Пользователю",
+            value=(
+                f"{message.author.mention}\n"
+                f"ID: `{message.author.id}`"
+            ),
+            inline=False
+        )
+    else:
+        embed.add_field(
+            name="Пользователь",
+            value=(
+                f"{message.author.mention}\n"
+                f"ID: `{message.author.id}`"
+            ),
+            inline=False
+        )
 
     embed.add_field(
         name="Канал",
@@ -411,6 +488,132 @@ async def on_message(message: discord.Message):
         return
 
     await bot.process_commands(message)    
+
+# —————————————————————————————————————————————
+# ЛОГИ ВЫДАЧИ И СНЯТИЯ РОЛЕЙ
+# —————————————————————————————————————————————
+
+async def find_role_update_actor(member: discord.Member):
+    """Определяет, кто изменил роли участника, по журналу аудита."""
+    await asyncio.sleep(1)
+
+    try:
+        async for entry in member.guild.audit_logs(
+            limit=10,
+            action=discord.AuditLogAction.member_role_update
+        ):
+            if not entry.target or entry.target.id != member.id:
+                continue
+
+            age = (
+                datetime.now(timezone.utc) - entry.created_at
+            ).total_seconds()
+
+            if age <= 15:
+                return entry.user
+
+    except discord.Forbidden:
+        print(
+            f"Нет права на просмотр журнала аудита "
+            f"на сервере: {member.guild.name}"
+        )
+    except discord.HTTPException as error:
+        print(f"Ошибка получения журнала аудита ролей: {error}")
+
+    return None
+
+
+def format_roles_for_log(roles: list[discord.Role]):
+    value = "> " + " ".join(role.mention for role in roles)
+    if len(value) > 1024:
+        value = value[:1021] + "..."
+    return value
+
+
+@bot.listen("on_member_update")
+async def role_change_logs(
+    before: discord.Member,
+    after: discord.Member
+):
+    if before.roles == after.roles:
+        return
+
+    log_channel = get_role_log_channel(after.guild)
+    if not log_channel:
+        return
+
+    before_ids = {role.id for role in before.roles}
+    after_ids = {role.id for role in after.roles}
+
+    added_roles = [
+        role for role in after.roles
+        if role.id not in before_ids and role != after.guild.default_role
+    ]
+    removed_roles = [
+        role for role in before.roles
+        if role.id not in after_ids and role != after.guild.default_role
+    ]
+
+    if not added_roles and not removed_roles:
+        return
+
+    actor = await find_role_update_actor(after)
+    actor_text = (
+        f"{actor.mention}\nID: `{actor.id}`"
+        if actor else "Не удалось определить"
+    )
+    member_text = f"{after.mention}\nID: `{after.id}`"
+
+    try:
+        if added_roles:
+            embed = discord.Embed(
+                title="Выдача ролей",
+                color=COLOR,
+                timestamp=moscow_time()
+            )
+            embed.add_field(
+                name="Выдал(а)",
+                value=actor_text,
+                inline=False
+            )
+            embed.add_field(
+                name="Пользователю",
+                value=member_text,
+                inline=False
+            )
+            embed.add_field(
+                name="Выданные роли",
+                value=format_roles_for_log(added_roles),
+                inline=False
+            )
+            await log_channel.send(embed=embed)
+
+        if removed_roles:
+            embed = discord.Embed(
+                title="Снятие ролей",
+                color=COLOR,
+                timestamp=moscow_time()
+            )
+            embed.add_field(
+                name="Снял(а)",
+                value=actor_text,
+                inline=False
+            )
+            embed.add_field(
+                name="Пользователю",
+                value=member_text,
+                inline=False
+            )
+            embed.add_field(
+                name="Снятые роли",
+                value=format_roles_for_log(removed_roles),
+                inline=False
+            )
+            await log_channel.send(embed=embed)
+
+    except discord.HTTPException as error:
+        print(f"Ошибка отправки лога изменения ролей: {error}")
+
 
 # —————————————————————————————————————————————
 # ЛОГИ ТАЙМ-АУТОВ
@@ -993,6 +1196,7 @@ async def on_guild_channel_delete(channel):
 # —————————————————————————————————————————————
 
 ANTI_CRASH_ROLE_ID = 1527476785590177903
+ANTICRASH_OWNER_ID = 1519960093787951107
 
 
 anti_crash_roles = {}
@@ -1087,14 +1291,10 @@ async def activate_antichrash(member, reason):
 class AntiCrashView(discord.ui.View):
 
     def __init__(self, member_id):
-
-        super().__init__(
-            timeout=None
-        )
-
+        super().__init__(timeout=None)
         self.member_id = member_id
-
-
+        self.used = False
+        self.remove_lock = asyncio.Lock()
 
     @discord.ui.button(
         label="Снять антикраш",
@@ -1106,115 +1306,161 @@ class AntiCrashView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button
     ):
-
-
-        member = interaction.guild.get_member(
-            self.member_id
-        )
-
-
-        if member is None:
-
+        # Кнопкой может пользоваться только владелец указанного Discord-аккаунта.
+        if interaction.user.id != ANTICRASH_OWNER_ID:
             await interaction.response.send_message(
-                "Пользователь не найден",
+                "Эта кнопка доступна только владельцу бота.",
                 ephemeral=True
             )
-
             return
 
+        async with self.remove_lock:
+            # Защита от двойного клика и повторной отправки эмбеда.
+            if self.used or self.member_id not in anti_crash_roles:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "Антикраш уже снят.",
+                        ephemeral=True
+                    )
+                return
 
+            member = interaction.guild.get_member(self.member_id)
 
-        anti_role = interaction.guild.get_role(
-            ANTI_CRASH_ROLE_ID
-        )
-
-
-        if anti_role:
-
-            await member.remove_roles(
-                anti_role
-            )
-
-
-
-        # возвращаем старые роли
-        roles = anti_crash_roles.get(
-            member.id,
-            []
-        )
-
-
-        for role_id in roles:
-
-            role = interaction.guild.get_role(
-                role_id
-            )
-
-            if role:
-
-                await member.add_roles(
-                    role
+            if member is None:
+                await interaction.response.send_message(
+                    "Пользователь не найден",
+                    ephemeral=True
                 )
+                return
+
+            self.used = True
+            button.disabled = True
+
+            # Сначала удаляем пользователя из активной защиты, чтобы обработчик
+            # ролей не вернул антикраш-роль во время её снятия.
+            roles = anti_crash_roles.pop(member.id, [])
+
+            # Сразу отключаем кнопку в исходном сообщении.
+            await interaction.response.edit_message(view=self)
+
+            anti_role = interaction.guild.get_role(ANTI_CRASH_ROLE_ID)
+
+            try:
+                if anti_role and anti_role in member.roles:
+                    await member.remove_roles(
+                        anti_role,
+                        reason=f"Антикраш снят владельцем {interaction.user}"
+                    )
+
+                # Возвращаем роли, которые были у администратора до антикраша.
+                restored_roles = []
+                for role_id in roles:
+                    role = interaction.guild.get_role(role_id)
+                    if role and role != anti_role:
+                        await member.add_roles(
+                            role,
+                            reason="Возврат ролей после снятия антикраша"
+                        )
+                        restored_roles.append(role.mention)
+
+            except (discord.Forbidden, discord.HTTPException) as error:
+                print(f"Ошибка снятия антикраша или возврата ролей: {error}")
+                restored_roles = [
+                    role.mention
+                    for role_id in roles
+                    if (role := interaction.guild.get_role(role_id)) is not None
+                    and role != anti_role
+                    and role in member.roles
+                ]
+
+            roles_text = (
+                "\n".join(f"> {role}" for role in restored_roles)
+                if restored_roles
+                else "> Роли отсутствуют"
+            )
+
+            embed = discord.Embed(
+                title="Снятие антикраша",
+                color=COLOR
+            )
+
+            embed.add_field(
+                name="Снял(а)",
+                value=(
+                    f"{interaction.user.mention}\n"
+                    f"ID: `{interaction.user.id}`"
+                ),
+                inline=False
+            )
+
+            embed.add_field(
+                name="Администратору",
+                value=(
+                    f"{member.mention}\n"
+                    f"ID: `{member.id}`"
+                ),
+                inline=False
+            )
+
+            embed.add_field(
+                name="Возвращённые роли",
+                value=roles_text,
+                inline=False
+            )
+
+            embed.add_field(
+                name="Дата и время снятия антикраша",
+                value=f"> {format_english_datetime()}",
+                inline=False
+            )
+
+            # Эмбед отправляется ровно один раз после успешного нажатия.
+            await interaction.followup.send(embed=embed)
 
 
+# —————————————————————————————————————————————
+# ЗАЩИТА РОЛИ АНТИКРАША
+# —————————————————————————————————————————————
 
-        restored_roles = []
+@bot.listen("on_member_update")
+async def enforce_antichrash_role(
+    before: discord.Member,
+    after: discord.Member
+):
+    """Пока антикраш активен, оставляет участнику только антикраш-роль."""
+    if after.id not in anti_crash_roles:
+        return
 
-        for role_id in roles:
-            role = interaction.guild.get_role(role_id)
-            if role:
-                restored_roles.append(role.mention)
+    if before.roles == after.roles:
+        return
 
-        anti_crash_roles.pop(
-            member.id,
-            None
+    anti_role = after.guild.get_role(ANTI_CRASH_ROLE_ID)
+    if anti_role is None:
+        print(f"Не найдена антикраш-роль с ID {ANTI_CRASH_ROLE_ID}")
+        return
+
+    current_role_ids = {
+        role.id
+        for role in after.roles
+        if role != after.guild.default_role
+    }
+
+    if current_role_ids == {ANTI_CRASH_ROLE_ID}:
+        return
+
+    try:
+        # Любые выданные роли удаляются, а снятая антикраш-роль возвращается.
+        await after.edit(
+            roles=[anti_role],
+            reason="Активен антикраш: разрешена только антикраш-роль"
         )
-
-        roles_text = (
-            "\n".join(f"> {role}" for role in restored_roles)
-            if restored_roles
-            else "> Роли отсутствуют"
+    except discord.Forbidden:
+        print(
+            f"Не удалось восстановить антикраш-роли для {after} ({after.id}): "
+            "проверь права и положение роли бота"
         )
-
-        embed = discord.Embed(
-            title="Снятие антикраша",
-            color=COLOR
-        )
-
-        embed.add_field(
-            name="Снял(а)",
-            value=(
-                f"{interaction.user.mention}\n"
-                f"ID: `{interaction.user.id}`"
-            ),
-            inline=False
-        )
-
-        embed.add_field(
-            name="Администратору",
-            value=(
-                f"{member.mention}\n"
-                f"ID: `{member.id}`"
-            ),
-            inline=False
-        )
-
-        embed.add_field(
-            name="Возвращённые роли",
-            value=roles_text,
-            inline=False
-        )
-
-        embed.add_field(
-            name="Дата и время снятия антикраша",
-            value=f"> {format_english_datetime()}",
-            inline=False
-        )
-
-        await interaction.response.send_message(
-            embed=embed
-        )
-
+    except discord.HTTPException as error:
+        print(f"Ошибка восстановления антикраш-роли для {after.id}: {error}")
 
 
 
