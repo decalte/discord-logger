@@ -1286,7 +1286,7 @@ async def timely(interaction: discord.Interaction):
                 remaining_text = f"{minutes} {minute_word(minutes)}"
 
             embed.description = (
-                f"{interaction.user.mention}, Вы **уже** забрали **временную** награду! "
+                f"{interaction.user.mention}, Вы **уже** забрали **временную** награду!\n"
                 f"Вы сможете **получить** следующую через **{remaining_text}**"
             )
             await interaction.response.send_message(embed=embed)
@@ -1308,7 +1308,7 @@ async def timely(interaction: discord.Interaction):
                 (interaction.user.id, now.isoformat()),
             )
     embed.description = (
-        f"{interaction.user.mention}, Вы успешно **забрали** свои **50** 🪙!\n"
+        f"{interaction.user.mention}, Вы успешно **забрали** свои **50** 🪙!"
         "Возвращайтесь через 12 часов"
     )
 
