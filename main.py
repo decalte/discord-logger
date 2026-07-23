@@ -1308,7 +1308,7 @@ async def timely(interaction: discord.Interaction):
                 (interaction.user.id, now.isoformat()),
             )
     embed.description = (
-        f"{interaction.user.mention}, Вы успешно **забрали** свои **50** 🪙!"
+        f"{interaction.user.mention}, Вы успешно **забрали** свои **50** 🪙! "
         "Возвращайтесь через 12 часов"
     )
 
