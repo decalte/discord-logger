@@ -1332,7 +1332,7 @@ async def top(interaction: discord.Interaction):
         lines.append(f"{prefix} {member.mention} — **{int(row['count'])} сообщений**")
     embed = discord.Embed(
         title="ТОП-10 пользователей по текстовому онлайну",
-        description=">>> " + ("\n".join(lines) if lines else "Сообщений пока нет"),
+        description="\n".join(lines) if lines else "Сообщений пока нет",
         color=COLOR,
     )
     embed.set_thumbnail(url=avatar_url(interaction.user))
