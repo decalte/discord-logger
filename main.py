@@ -627,7 +627,7 @@ async def on_guild_role_update(before: discord.Role, after: discord.Role):
     if name_changed:
         embed.add_field(name="Новое название", value=f"> {after.mention}", inline=False)
     if color_changed:
-        embed.add_field(name="Новый цвет", value=str(after.color).upper(), inline=False)
+        embed.add_field(name="Новый цвет", value=f"> {str(after.color).upper()}", inline=False)
     await log_channel.send(embed=embed)
 
 
