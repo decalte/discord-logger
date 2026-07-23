@@ -32,6 +32,13 @@ BOOSTER_ROLE_ID = 1517190145835798639
 AUTO_ROLE_ID = 1527176147777884160
 OWNER_ID = 1519960093787951107
 
+CLEAR_ALLOWED_ROLE_IDS = {
+    1518684434252169247,
+    1516563878669193357,
+    1527110780892483754,
+    1526363607531520191,
+}
+
 COLOR = discord.Color.from_rgb(47, 47, 47)
 MOSCOW_TZ = timezone(timedelta(hours=3))
 DATABASE_PATH = Path(os.getenv("BOT_DATABASE", "bot_data.sqlite3"))
@@ -615,13 +622,12 @@ async def on_guild_role_update(before: discord.Role, after: discord.Role):
         after.guild, discord.AuditLogAction.role_update, after.id
     )
     actor_text = member_id_text(audit.user) if audit else "Не удалось определить"
-    embed = discord.Embed(title="Изменение роли", color=COLOR)
+    embed = discord.Embed(title="Изменение роли", color=COLOR, timestamp=moscow_time())
     embed.add_field(name="Изменил(а)", value=actor_text, inline=False)
     if name_changed:
         embed.add_field(name="Новое название", value=f"> {after.mention}", inline=False)
     if color_changed:
         embed.add_field(name="Новый цвет", value=str(after.color).upper(), inline=False)
-    embed.add_field(name=russian_time(), value="\u200b", inline=False)
     await log_channel.send(embed=embed)
 
 
@@ -1000,10 +1006,117 @@ async def avatar(interaction: discord.Interaction, user: discord.Member | None =
     await send_avatar(interaction, user)
 
 
-@bot.tree.command(name="clear", description="Посмотреть аватарку")
-@app_commands.rename(user="пользователь")
-async def clear(interaction: discord.Interaction, user: discord.Member | None = None):
-    await send_avatar(interaction, user)
+def russian_message_word(number: int) -> str:
+    number = abs(number)
+    if number % 100 in range(11, 15):
+        return "сообщений"
+    if number % 10 == 1:
+        return "сообщение"
+    if number % 10 in range(2, 5):
+        return "сообщения"
+    return "сообщений"
+
+
+def has_clear_role(member: discord.Member) -> bool:
+    return any(role.id in CLEAR_ALLOWED_ROLE_IDS for role in member.roles)
+
+
+@bot.tree.command(name="clear", description="Удаление сообщений")
+@app_commands.describe(
+    amount="Количество сообщений для удаления",
+    user="Пользователь, чьи сообщения нужно удалить",
+)
+@app_commands.rename(amount="количество", user="пользователь")
+async def clear(
+    interaction: discord.Interaction,
+    amount: app_commands.Range[int, 1, 1000],
+    user: discord.Member | None = None,
+):
+    if not interaction.guild or not isinstance(interaction.user, discord.Member):
+        await interaction.response.send_message(
+            "Эту команду можно использовать только на сервере.",
+            ephemeral=True,
+        )
+        return
+
+    if not has_clear_role(interaction.user):
+        await interaction.response.send_message(
+            "У вас нет доступа к этой команде.",
+            ephemeral=True,
+        )
+        return
+
+    channel = interaction.channel
+    if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+        await interaction.response.send_message(
+            "Команду можно использовать только в текстовом канале.",
+            ephemeral=True,
+        )
+        return
+
+    bot_member = interaction.guild.me
+    permissions = channel.permissions_for(bot_member) if bot_member else None
+    if not permissions or not permissions.manage_messages or not permissions.read_message_history:
+        await interaction.response.send_message(
+            "Боту нужны права «Управлять сообщениями» и «Читать историю сообщений».",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    try:
+        if user is None:
+            deleted = await channel.purge(limit=amount)
+        else:
+            matched = 0
+
+            def check(message: discord.Message) -> bool:
+                nonlocal matched
+                if matched >= amount:
+                    return False
+                if message.author.id == user.id:
+                    matched += 1
+                    return True
+                return False
+
+            # Просматриваем историю с запасом, чтобы найти указанное количество
+            # сообщений конкретного пользователя.
+            deleted = await channel.purge(limit=10000, check=check)
+
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "Не удалось удалить сообщения: у бота недостаточно прав.",
+            ephemeral=True,
+        )
+        return
+    except discord.HTTPException as error:
+        await interaction.followup.send(
+            f"Не удалось удалить сообщения из-за ошибки Discord: `{error}`",
+            ephemeral=True,
+        )
+        return
+
+    deleted_count = len(deleted)
+    word = russian_message_word(deleted_count)
+
+    if user is None:
+        description = (
+            f"{interaction.user.mention}, Вы успешно удалили "
+            f"**{deleted_count} {word}**."
+        )
+    else:
+        description = (
+            f"{interaction.user.mention}, Вы успешно удалили "
+            f"**{deleted_count} {word}** от **пользователя** {user.mention}."
+        )
+
+    embed = discord.Embed(
+        title="Удаление сообщений",
+        description=description,
+        color=COLOR,
+    )
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="banner", description="Посмотреть баннер")
@@ -1152,11 +1265,10 @@ class CurrencySelectView(discord.ui.View):
             description,
             allow_clamp_to_zero=self.remove,
         )
-        embed = discord.Embed(title=f"{action} {currency_ru}", color=COLOR)
+        embed = discord.Embed(title=f"{action} {currency_ru}", color=COLOR, timestamp=moscow_time())
         embed.add_field(name="Списал(а)" if self.remove else "Выдал(а)", value=member_id_text(self.issuer), inline=False)
         embed.add_field(name="У пользователя" if self.remove else "Пользователю", value=member_id_text(self.target), inline=False)
         embed.add_field(name=f"Количество {currency_ru}", value=f"> `{self.amount}`", inline=False)
-        embed.add_field(name=russian_time(), value="\u200b", inline=False)
         await interaction.channel.send(embed=embed)
 
         log_embed = discord.Embed(title=f"{action} {currency_ru}", color=COLOR)
