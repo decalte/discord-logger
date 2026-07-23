@@ -41,7 +41,13 @@ CLEAR_ALLOWED_ROLE_IDS = {
 
 COLOR = discord.Color.from_rgb(47, 47, 47)
 MOSCOW_TZ = timezone(timedelta(hours=3))
-DATABASE_PATH = Path(os.getenv("BOT_DATABASE", "bot_data.sqlite3"))
+# База по умолчанию хранится рядом с main.py, а не в случайной рабочей папке.
+# При необходимости на хостинге можно задать абсолютный путь через BOT_DATABASE.
+DEFAULT_DATABASE_PATH = Path(__file__).resolve().parent / "bot_data.sqlite3"
+DATABASE_PATH = Path(os.getenv("BOT_DATABASE", str(DEFAULT_DATABASE_PATH))).expanduser().resolve()
+DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+MESSAGE_TOP_RESET_DAYS = 30
 
 intents = discord.Intents.default()
 intents.guilds = True
@@ -102,6 +108,11 @@ def initialize_database() -> None:
                 PRIMARY KEY (guild_id, user_id)
             );
 
+            CREATE TABLE IF NOT EXISTS app_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS hidden_roles (
                 guild_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
@@ -119,6 +130,80 @@ def initialize_database() -> None:
             );
             """
         )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO app_metadata(key, value)
+            VALUES ('message_counts_last_reset', ?)
+            """,
+            (datetime.now(timezone.utc).isoformat(),),
+        )
+
+
+async def reset_message_counts_if_due() -> bool:
+    """Сбрасывает текстовый топ один раз через каждые 30 суток."""
+    now = datetime.now(timezone.utc)
+
+    async with db_lock:
+        with db_connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT value FROM app_metadata WHERE key = 'message_counts_last_reset'"
+            ).fetchone()
+
+            if row is None:
+                connection.execute(
+                    """
+                    INSERT INTO app_metadata(key, value)
+                    VALUES ('message_counts_last_reset', ?)
+                    """,
+                    (now.isoformat(),),
+                )
+                connection.commit()
+                return False
+
+            try:
+                last_reset = datetime.fromisoformat(row["value"])
+                if last_reset.tzinfo is None:
+                    last_reset = last_reset.replace(tzinfo=timezone.utc)
+            except (TypeError, ValueError):
+                last_reset = now
+                connection.execute(
+                    """
+                    UPDATE app_metadata
+                    SET value = ?
+                    WHERE key = 'message_counts_last_reset'
+                    """,
+                    (now.isoformat(),),
+                )
+                connection.commit()
+                return False
+
+            if now - last_reset < timedelta(days=MESSAGE_TOP_RESET_DAYS):
+                connection.commit()
+                return False
+
+            connection.execute("DELETE FROM message_counts")
+            connection.execute(
+                """
+                UPDATE app_metadata
+                SET value = ?
+                WHERE key = 'message_counts_last_reset'
+                """,
+                (now.isoformat(),),
+            )
+            connection.commit()
+            print("Текстовый топ автоматически сброшен после 30 дней.")
+            return True
+
+
+@tasks.loop(hours=1)
+async def message_top_reset_watchdog():
+    await reset_message_counts_if_due()
+
+
+@message_top_reset_watchdog.before_loop
+async def before_message_top_reset_watchdog():
+    await bot.wait_until_ready()
 
 
 async def get_balance(user_id: int) -> tuple[int, int]:
@@ -489,8 +574,11 @@ async def on_ready():
             print(f"Ошибка синхронизации команд: {error}")
     await bot.change_presence(status=discord.Status.idle)
     await connect_to_target_voice_channel()
+    await reset_message_counts_if_due()
     if not voice_connection_watchdog.is_running():
         voice_connection_watchdog.start()
+    if not message_top_reset_watchdog.is_running():
+        message_top_reset_watchdog.start()
     print(f"Бот запущен: {bot.user}")
 
 
@@ -1162,14 +1250,37 @@ async def timely(interaction: discord.Interaction):
             remaining = next_claim - now
             total_minutes = max(1, math.ceil(remaining.total_seconds() / 60))
             hours, minutes = divmod(total_minutes, 60)
-            parts = []
-            if hours:
-                parts.append(f"{hours} ч.")
-            if minutes:
-                parts.append(f"{minutes} мин.")
+
+            def hour_word(value: int) -> str:
+                if value % 100 in range(11, 15):
+                    return "часов"
+                if value % 10 == 1:
+                    return "час"
+                if value % 10 in range(2, 5):
+                    return "часа"
+                return "часов"
+
+            def minute_word(value: int) -> str:
+                if value % 100 in range(11, 15):
+                    return "минут"
+                if value % 10 == 1:
+                    return "минуту"
+                if value % 10 in range(2, 5):
+                    return "минуты"
+                return "минут"
+
+            if hours and minutes:
+                remaining_text = (
+                    f"{hours} {hour_word(hours)} {minutes} {minute_word(minutes)}"
+                )
+            elif hours:
+                remaining_text = f"{hours} {hour_word(hours)}"
+            else:
+                remaining_text = f"{minutes} {minute_word(minutes)}"
+
             embed.description = (
-                f"{interaction.user.mention}, Вы уже **забрали** свою награду.\n"
-                f"Возвращайтесь через **{' '.join(parts)}**"
+                f"{interaction.user.mention}, Вы уже **забрали временную награду!** "
+                f"Вы сможете **получить** следующую через **{remaining_text}**"
             )
             await interaction.response.send_message(embed=embed)
             return
@@ -1541,10 +1652,11 @@ class TransactionsView(discord.ui.View):
             lines.append("История транзакций отсутствует")
         embed = discord.Embed(
             title=f"Транзакции — {self.user.name}",
-            description="\n".join(lines) + f"\n\nСтраница {self.page + 1}/{self.page_count}",
+            description="\n".join(lines),
             color=COLOR,
         )
         embed.set_thumbnail(url=avatar_url(self.user))
+        embed.set_footer(text=f"Страница {self.page + 1}/{self.page_count}")
         return embed
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
