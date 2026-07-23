@@ -317,7 +317,7 @@ def russian_date(value: datetime) -> str:
         "июля", "августа", "сентября", "октября", "ноября", "декабря",
     )
     local = moscow_time(value)
-    return f"{local.day} {months[local.month - 1]} {local.year}"
+    return f"{local.day} {months[local.month - 1]}, {local.year}"
 
 
 def avatar_url(user: discord.abc.User) -> str:
@@ -1168,7 +1168,7 @@ async def timely(interaction: discord.Interaction):
             if minutes:
                 parts.append(f"{minutes} мин.")
             embed.description = (
-                f">>> {interaction.user.mention}, Вы уже **забрали** свою награду.\n"
+                f"{interaction.user.mention}, Вы уже **забрали** свою награду.\n"
                 f"Возвращайтесь через **{' '.join(parts)}**"
             )
             await interaction.response.send_message(embed=embed)
@@ -1190,7 +1190,7 @@ async def timely(interaction: discord.Interaction):
                 (interaction.user.id, now.isoformat()),
             )
     embed.description = (
-        f">>> {interaction.user.mention}, Вы **забрали** свои **50** 🪙\n"
+        f"{interaction.user.mention}, Вы **забрали** свои **50** 🪙\n"
         "Возвращайтесь через 12 часов"
     )
 
@@ -1374,7 +1374,7 @@ class GiveView(discord.ui.View):
         embed.set_thumbnail(url=avatar_url(self.sender))
         if success:
             embed.description = (
-                f">>> {self.sender.mention}, вы передали **{self.amount}** 🪙\n"
+                f"{self.sender.mention}, вы передали **{self.amount}** 🪙\n"
                 f"пользователю {self.recipient.mention}"
             )
 
@@ -1392,7 +1392,7 @@ class GiveView(discord.ui.View):
             log_embed.set_footer(text=russian_time())
             await send_economy_log(interaction.guild, log_embed)
         else:
-            embed.description = f">>> {self.sender.mention}, у Вас недостаточно монет с учётом комиссии 5%"
+            embed.description = f"{self.sender.mention}, у Вас недостаточно монет с учётом комиссии 5%"
         await interaction.response.edit_message(embed=embed, view=None)
 
     @discord.ui.button(label="Отмена", style=discord.ButtonStyle.danger)
@@ -1404,7 +1404,7 @@ class GiveView(discord.ui.View):
         embed = discord.Embed(title="Передать монеты", color=COLOR)
         embed.set_thumbnail(url=avatar_url(self.sender))
         embed.description = (
-            f">>> {self.sender.mention}, вы **отказались** передавать **{self.amount}** 🪙 "
+            f"{self.sender.mention}, вы **отказались** передавать **{self.amount}** 🪙 "
             f"пользователю {self.recipient.mention}"
         )
         await interaction.response.edit_message(embed=embed, view=None)
@@ -1430,7 +1430,7 @@ async def give(interaction: discord.Interaction, user: discord.Member, amount: i
     embed = discord.Embed(title="Передать монеты", color=COLOR)
     embed.set_thumbnail(url=avatar_url(interaction.user))
     embed.description = (
-        f">>> {interaction.user.mention}, вы **уверены** что хотите\n"
+        f"{interaction.user.mention}, вы **уверены** что хотите\n"
         f"передать **{amount}** 🪙, включая\n"
         f"комиссию 5% пользователю {user.mention}?"
     )
@@ -1541,7 +1541,7 @@ class TransactionsView(discord.ui.View):
             lines.append("История транзакций отсутствует")
         embed = discord.Embed(
             title=f"Транзакции — {self.user.name}",
-            description="\n".join(lines) + f"\n\n**Страница {self.page + 1}/{self.page_count}**",
+            description="\n".join(lines) + f"\n\nСтраница {self.page + 1}/{self.page_count}",
             color=COLOR,
         )
         embed.set_thumbnail(url=avatar_url(self.user))
