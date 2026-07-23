@@ -1232,10 +1232,10 @@ async def banner(interaction: discord.Interaction, user: discord.Member | None =
 async def balance(interaction: discord.Interaction, user: discord.Member | None = None):
     target = user or interaction.user
     coins, diamonds = await get_balance(target.id)
-    embed = discord.Embed(title=f"Баланс — {target.name}", color=COLOR)
+    embed = discord.Embed(title=f"Текущий баланс — {target.name}", color=COLOR)
     embed.set_thumbnail(url=avatar_url(target))
-    embed.add_field(name="• Монеты", value=f"```{coins}```", inline=False)
-    embed.add_field(name="• Алмазы", value=f"```{diamonds}```", inline=False)
+    embed.add_field(name="> Монеты", value=f"```{coins}```", inline=False)
+    embed.add_field(name="> Алмазы", value=f"```{diamonds}```", inline=False)
     await interaction.response.send_message(embed=embed)
 
 
@@ -1286,7 +1286,7 @@ async def timely(interaction: discord.Interaction):
                 remaining_text = f"{minutes} {minute_word(minutes)}"
 
             embed.description = (
-                f"{interaction.user.mention}, Вы уже **забрали временную награду!** "
+                f"{interaction.user.mention}, Вы **уже** забрали **временную** награду! "
                 f"Вы сможете **получить** следующую через **{remaining_text}**"
             )
             await interaction.response.send_message(embed=embed)
@@ -1308,7 +1308,7 @@ async def timely(interaction: discord.Interaction):
                 (interaction.user.id, now.isoformat()),
             )
     embed.description = (
-        f"{interaction.user.mention}, Вы **забрали** свои **50** 🪙\n"
+        f"{interaction.user.mention}, Вы успешно **забрали** свои **50** 🪙!\n"
         "Возвращайтесь через 12 часов"
     )
 
