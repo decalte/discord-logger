@@ -46,7 +46,7 @@ MESSAGE_ALLOWED_ROLE_IDS = {
     1526363607531520191,
 }
 
-COLOR = discord.Color.from_rgb(47, 47, 47)
+COLOR = discord.Color(0x303136)
 MOSCOW_TZ = timezone(timedelta(hours=3))
 # База по умолчанию хранится рядом с main.py, а не в случайной рабочей папке.
 # При необходимости на хостинге можно задать абсолютный путь через BOT_DATABASE.
