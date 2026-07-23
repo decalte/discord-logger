@@ -1732,7 +1732,7 @@ class MessageModal(discord.ui.Modal):
 
 @bot.tree.command(
     name="message",
-    description="Отправить сообщение участнику сервера",
+    description="Отправить сообщение",
 )
 @app_commands.describe(user="Пользователь, которому нужно отправить сообщение")
 @app_commands.rename(user="пользователь")
