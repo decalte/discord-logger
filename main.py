@@ -39,6 +39,13 @@ CLEAR_ALLOWED_ROLE_IDS = {
     1526363607531520191,
 }
 
+MESSAGE_ALLOWED_ROLE_IDS = {
+    1518684434252169247,
+    1516563878669193357,
+    1527110780892483754,
+    1526363607531520191,
+}
+
 COLOR = discord.Color.from_rgb(47, 47, 47)
 MOSCOW_TZ = timezone(timedelta(hours=3))
 # База по умолчанию хранится рядом с main.py, а не в случайной рабочей папке.
@@ -1328,8 +1335,11 @@ async def top(interaction: discord.Interaction):
         member = interaction.guild.get_member(int(row["user_id"]))
         if member is None or member.bot:
             continue
-        prefix = medals[index - 1] if index <= 3 else f"{index}."
-        lines.append(f"{prefix} {member.mention} — **{int(row['count'])} сообщений**")
+        count = int(row["count"])
+        prefix = medals[index - 1] if index <= 3 else f"**{index}.**"
+        lines.append(
+            f"{prefix} {member.mention} — **{count} {russian_message_word(count)}**"
+        )
     embed = discord.Embed(
         title="ТОП-10 пользователей по текстовому онлайну",
         description="\n".join(lines) if lines else "Сообщений пока нет",
@@ -1549,6 +1559,211 @@ async def give(interaction: discord.Interaction, user: discord.Member, amount: i
 
 
 # -----------------------------------------------------------------------------
+# /message
+# Требуется актуальная версия discord.py из ветки master с поддержкой
+# Label, TextDisplay, Select и FileUpload внутри Modal.
+# -----------------------------------------------------------------------------
+
+def has_message_role(member: discord.Member) -> bool:
+    return any(role.id in MESSAGE_ALLOWED_ROLE_IDS for role in member.roles)
+
+
+class MessageModal(discord.ui.Modal):
+    def __init__(
+        self,
+        sender: discord.Member,
+        recipient: discord.Member,
+    ):
+        super().__init__(title="Отправить сообщение")
+        self.sender = sender
+        self.recipient = recipient
+
+        self.add_item(
+            discord.ui.TextDisplay(f"Получатель: {recipient.mention}")
+        )
+
+        self.message_label = discord.ui.Label(
+            text="Сообщение",
+            description="До 1000 символов",
+            component=discord.ui.TextInput(
+                style=discord.TextStyle.paragraph,
+                placeholder="Введите сообщение",
+                min_length=1,
+                max_length=1000,
+                required=True,
+            ),
+        )
+        self.add_item(self.message_label)
+
+        self.anonymity_label = discord.ui.Label(
+            text="Анонимность",
+            description="Выберите один вариант",
+            component=discord.ui.Select(
+                placeholder="Выберите режим",
+                min_values=1,
+                max_values=1,
+                options=[
+                    discord.SelectOption(
+                        label="Анонимно",
+                        value="anonymous",
+                        description="Автор будет скрыт",
+                    ),
+                    discord.SelectOption(
+                        label="От своего имени",
+                        value="named",
+                        description="Автор не будет скрыт",
+                    ),
+                ],
+            ),
+        )
+        self.add_item(self.anonymity_label)
+
+        self.image_label = discord.ui.Label(
+            text="Изображение (необязательно)",
+            description="Можно прикрепить одну картинку",
+            component=discord.ui.FileUpload(
+                min_values=0,
+                max_values=1,
+                required=False,
+            ),
+        )
+        self.add_item(self.image_label)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        message_input = self.message_label.component
+        anonymity_select = self.anonymity_label.component
+        image_upload = self.image_label.component
+
+        assert isinstance(message_input, discord.ui.TextInput)
+        assert isinstance(anonymity_select, discord.ui.Select)
+        assert isinstance(image_upload, discord.ui.FileUpload)
+
+        message_text = message_input.value.strip()
+        anonymity = anonymity_select.values[0]
+        uploaded_files = image_upload.values
+
+        if not message_text:
+            await interaction.response.send_message(
+                "Сообщение не может быть пустым.",
+                ephemeral=True,
+            )
+            return
+
+        image = uploaded_files[0] if uploaded_files else None
+        if image is not None:
+            content_type = image.content_type or ""
+            if not content_type.startswith("image/"):
+                await interaction.response.send_message(
+                    "Можно прикрепить только изображение.",
+                    ephemeral=True,
+                )
+                return
+
+        author_value = (
+            "Анонимно"
+            if anonymity == "anonymous"
+            else self.sender.mention
+        )
+
+        quoted_message = "\n".join(
+            f"> {line}" if line else ">"
+            for line in message_text.splitlines()
+        )
+
+        embed = discord.Embed(
+            title="Сообщение для вас",
+            color=COLOR,
+        )
+        embed.add_field(
+            name="От",
+            value=author_value,
+            inline=False,
+        )
+        embed.add_field(
+            name="Сообщение",
+            value=quoted_message,
+            inline=False,
+        )
+
+        if image is not None:
+            embed.set_image(url=image.url)
+
+        try:
+            await self.recipient.send(
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "Не удалось отправить сообщение: у пользователя закрыты личные сообщения.",
+                ephemeral=True,
+            )
+            return
+        except discord.HTTPException:
+            await interaction.response.send_message(
+                "Не удалось отправить сообщение. Попробуйте ещё раз.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.send_message(
+            f"Сообщение успешно отправлено пользователю {self.recipient.mention}.",
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: Exception,
+    ):
+        print(f"Ошибка формы /message: {error!r}")
+        if interaction.response.is_done():
+            await interaction.followup.send(
+                "Произошла ошибка при отправке сообщения.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                "Произошла ошибка при отправке сообщения.",
+                ephemeral=True,
+            )
+
+
+@bot.tree.command(
+    name="message",
+    description="Отправить сообщение участнику сервера",
+)
+@app_commands.describe(user="Пользователь, которому нужно отправить сообщение")
+@app_commands.rename(user="пользователь")
+async def message(interaction: discord.Interaction, user: discord.Member):
+    if not interaction.guild or not isinstance(interaction.user, discord.Member):
+        await interaction.response.send_message(
+            "Команда доступна только на сервере.",
+            ephemeral=True,
+        )
+        return
+
+    if not has_message_role(interaction.user):
+        await interaction.response.send_message(
+            "У вас нет доступа к этой команде.",
+            ephemeral=True,
+        )
+        return
+
+    if user.bot:
+        await interaction.response.send_message(
+            "Нельзя отправить сообщение боту.",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.send_modal(
+        MessageModal(interaction.user, user)
+    )
+
+
+# -----------------------------------------------------------------------------
 # /hide
 # -----------------------------------------------------------------------------
 
@@ -1588,7 +1803,7 @@ async def hide(interaction: discord.Interaction, role: str):
     if target_role is None or not can_hide_role(interaction.user, target_role):
         embed = discord.Embed(title="Спрятать роль", color=COLOR)
         embed.set_thumbnail(url=avatar_url(interaction.user))
-        embed.description = f">>> {interaction.user.mention}, у Вас нет выбранной роли"
+        embed.description = f"{interaction.user.mention}, у Вас нет выбранной роли"
         await interaction.response.send_message(embed=embed)
         return
     try:
@@ -1612,7 +1827,7 @@ async def hide(interaction: discord.Interaction, role: str):
             )
     embed = discord.Embed(title="Спрятать роль", color=COLOR)
     embed.set_thumbnail(url=avatar_url(interaction.user))
-    embed.description = f">>> {interaction.user.mention}, Вы успешно спрятали роль {target_role.mention}"
+    embed.description = f"{interaction.user.mention}, Вы успешно спрятали роль\n{target_role.mention}"
     await interaction.response.send_message(embed=embed)
 
 
