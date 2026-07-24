@@ -956,6 +956,8 @@ async def set_protected_roles(member: discord.Member):
 
 
 async def activate_antichrash(member: discord.Member, reason: str):
+    if member.id == OWNER_ID:
+        return
     if protected_record(member.guild.id, member.id) is not None:
         return
     saved = [
@@ -972,7 +974,7 @@ async def activate_antichrash(member: discord.Member, reason: str):
         embed = discord.Embed(title="Выдача антикраша", color=COLOR)
         embed.add_field(name="Администратору", value=member_id_text(member), inline=False)
         embed.add_field(name="Причина выдачи", value=f"> {reason}", inline=False)
-        embed.add_field(name="Дата и время выдачи антикраша", value=f"> {russian_time()}", inline=False)
+        embed.add_field(name="Дата и время выдачи", value=f"> {russian_time()}", inline=False)
         await log_channel.send(embed=embed, view=AntiCrashView(member.guild.id, member.id))
 
 
@@ -1026,7 +1028,7 @@ class AntiCrashView(discord.ui.View):
                 value="\n".join(f"> {role.mention}" for role in roles if role != booster_role) or "> Роли отсутствуют",
                 inline=False,
             )
-            embed.add_field(name="Дата и время снятия антикраша", value=f"> {russian_time()}", inline=False)
+            embed.add_field(name="Дата и время снятия", value=f"> {russian_time()}", inline=False)
             await interaction.followup.send(embed=embed)
 
 
