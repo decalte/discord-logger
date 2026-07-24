@@ -1275,8 +1275,8 @@ async def timely(interaction: discord.Interaction):
         if now < next_claim:
             next_claim_unix = int(next_claim.timestamp())
             embed.description = (
-                f"{interaction.user.mention}, Вы **уже** забрали **временную награду**!\n\n"
-                f"Вы можете **получить** следующую <t:{next_claim_unix}:R>."
+                f"{interaction.user.mention}, Вы **уже** забрали **временную награду**!\n"
+                f"Вы можете **получить** следующую <t:{next_claim_unix}:R>"
             )
             await interaction.response.send_message(embed=embed)
             return
@@ -1298,8 +1298,8 @@ async def timely(interaction: discord.Interaction):
             )
     next_claim_unix = int((now + timedelta(hours=5)).timestamp())
     embed.description = (
-        f"{interaction.user.mention}, Вы успешно **забрали** свои **50** 🪙!\n\n"
-        f"Возвращайтесь <t:{next_claim_unix}:R>."
+        f"{interaction.user.mention}, Вы успешно **забрали** свои **50** 🪙! "
+        f"Возвращайтесь <t:{next_claim_unix}:R>"
     )
 
     if bot.user is not None:
