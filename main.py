@@ -1495,7 +1495,7 @@ class GiveView(discord.ui.View):
         embed.set_thumbnail(url=avatar_url(self.sender))
         if success:
             embed.description = (
-                f"{self.sender.mention}, вы передали **{self.amount}** 🪙\n"
+                f"{self.sender.mention}, Вы передали **{self.amount}** 🪙\n"
                 f"пользователю {self.recipient.mention}"
             )
 
@@ -1551,7 +1551,7 @@ async def give(interaction: discord.Interaction, user: discord.Member, amount: i
     embed = discord.Embed(title="Передать монеты", color=COLOR)
     embed.set_thumbnail(url=avatar_url(interaction.user))
     embed.description = (
-        f"{interaction.user.mention}, вы **уверены** что хотите\n"
+        f"{interaction.user.mention}, Вы **уверены** что хотите\n"
         f"передать **{amount}** 🪙, включая\n"
         f"комиссию 5% пользователю {user.mention}?"
     )
@@ -1857,26 +1857,52 @@ class TransactionsView(discord.ui.View):
         start = self.page * self.per_page
         page_rows = self.rows[start:start + self.per_page]
         lines = []
+
         for row in page_rows:
             amount = int(row["amount"])
-            sign = "+" if amount > 0 else "−"
             icon = "➕" if amount > 0 else "➖"
             date = russian_date(datetime.fromisoformat(row["created_at"]))
-            lines.append(f"{icon} **{abs(amount)}** [{date}]\n{row['description']}")
+
+            description = row["description"]
+
+            # Показываем пользователя через @mention
+            if "Передано пользователю " in description:
+                user_id = description.split("Передано пользователю ")[-1]
+
+                if user_id.isdigit():
+                    description = f"Передано пользователю <@{user_id}>"
+
+            # Если есть получение от пользователя
+            if "Получено от пользователя " in description:
+                user_id = description.split("Получено от пользователя ")[-1]
+
+                if user_id.isdigit():
+                    description = f"Получено от пользователя <@{user_id}>"
+
+            lines.append(
+                f"{icon} {abs(amount)} [{date}]\n{description}"
+            )
+
         if not lines:
             lines.append("История транзакций отсутствует")
+
         embed = discord.Embed(
             title=f"Транзакции — {self.user.name}",
             description="\n".join(lines),
             color=COLOR,
         )
+
         embed.set_thumbnail(url=avatar_url(self.user))
         embed.set_footer(text=f"Страница {self.page + 1}/{self.page_count}")
+
         return embed
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("Кнопки доступны только автору команды.", ephemeral=True)
+            await interaction.response.send_message(
+                "Кнопки доступны только автору команды.",
+                ephemeral=True
+            )
             return False
         return True
 
@@ -1884,21 +1910,29 @@ class TransactionsView(discord.ui.View):
     async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.page -= 1
         self.update_buttons()
-        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+        await interaction.response.edit_message(
+            embed=self.build_embed(),
+            view=self
+        )
 
     @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
     async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.page += 1
         self.update_buttons()
-        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+        await interaction.response.edit_message(
+            embed=self.build_embed(),
+            view=self
+        )
 
 
 @bot.tree.command(name="transactions", description="История транзакций")
 async def transactions(interaction: discord.Interaction):
     rows = await get_transactions(interaction.user.id)
     view = TransactionsView(interaction.user.id, interaction.user, rows)
-    await interaction.response.send_message(embed=view.build_embed(), view=view)
-
+    await interaction.response.send_message(
+        embed=view.build_embed(),
+        view=view
+    )
 
 if __name__ == "__main__":
     initialize_database()
