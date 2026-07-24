@@ -1277,7 +1277,7 @@ async def timely(interaction: discord.Interaction):
         if now < next_claim:
             next_claim_unix = int(next_claim.timestamp())
             embed.description = (
-                f"{interaction.user.mention}, Вы **уже** забрали **временную награду**!\n"
+                f"{interaction.user.mention}, Вы **уже** забрали **временную** награду!\n"
                 f"Вы можете **получить** следующую <t:{next_claim_unix}:R>"
             )
             await interaction.response.send_message(embed=embed)
