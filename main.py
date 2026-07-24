@@ -403,6 +403,25 @@ def russian_time(value: datetime | None = None) -> str:
     return moscow_time(value).strftime("Сегодня, в %H:%M")
 
 
+def russian_datetime(value: datetime) -> str:
+    months = (
+        "января", "февраля", "марта", "апреля", "мая", "июня",
+        "июля", "августа", "сентября", "октября", "ноября", "декабря",
+    )
+    local = moscow_time(value)
+    today = moscow_time().date()
+
+    if local.date() == today:
+        return local.strftime("Сегодня, в %H:%M")
+    if local.date() == today + timedelta(days=1):
+        return local.strftime("Завтра, в %H:%M")
+
+    return (
+        f"{local.day} {months[local.month - 1]} {local.year}, "
+        f"в {local:%H:%M}"
+    )
+
+
 def russian_date(value: datetime) -> str:
     months = (
         "января", "февраля", "марта", "апреля", "мая", "июня",
@@ -752,7 +771,7 @@ async def timeout_logs(before: discord.Member, after: discord.Member):
         embed.add_field(name="Выдал(а)", value=moderator, inline=False)
         embed.add_field(name="Пользователю", value=member_id_text(after), inline=False)
         embed.add_field(name="Причина", value=f"> {reason}", inline=False)
-        embed.add_field(name="До", value=f"> {russian_time(after.timed_out_until)}", inline=False)
+        embed.add_field(name="До", value=f"> {russian_datetime(after.timed_out_until)}", inline=False)
     await log_channel.send(embed=embed)
 
 
@@ -1008,7 +1027,7 @@ class AntiCrashView(discord.ui.View):
                 inline=False,
             )
             embed.add_field(name="Дата и время снятия антикраша", value=f"> {russian_time()}", inline=False)
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed)
 
 
 @bot.listen("on_member_update")
@@ -1252,42 +1271,12 @@ async def timely(interaction: discord.Interaction):
     embed.set_thumbnail(url=avatar_url(interaction.user))
     if row:
         last_claim = datetime.fromisoformat(row["last_claim_at"])
-        next_claim = last_claim + timedelta(hours=12)
+        next_claim = last_claim + timedelta(hours=5)
         if now < next_claim:
-            remaining = next_claim - now
-            total_minutes = max(1, math.ceil(remaining.total_seconds() / 60))
-            hours, minutes = divmod(total_minutes, 60)
-
-            def hour_word(value: int) -> str:
-                if value % 100 in range(11, 15):
-                    return "часов"
-                if value % 10 == 1:
-                    return "час"
-                if value % 10 in range(2, 5):
-                    return "часа"
-                return "часов"
-
-            def minute_word(value: int) -> str:
-                if value % 100 in range(11, 15):
-                    return "минут"
-                if value % 10 == 1:
-                    return "минуту"
-                if value % 10 in range(2, 5):
-                    return "минуты"
-                return "минут"
-
-            if hours and minutes:
-                remaining_text = (
-                    f"{hours} {hour_word(hours)} {minutes} {minute_word(minutes)}"
-                )
-            elif hours:
-                remaining_text = f"{hours} {hour_word(hours)}"
-            else:
-                remaining_text = f"{minutes} {minute_word(minutes)}"
-
+            next_claim_unix = int(next_claim.timestamp())
             embed.description = (
-                f"{interaction.user.mention}, Вы **уже** забрали **временную** награду!\n"
-                f"Вы сможете **получить** следующую через **{remaining_text}**"
+                f"{interaction.user.mention}, Вы **уже** забрали **временную награду**!\n\n"
+                f"Вы можете **получить** следующую <t:{next_claim_unix}:R>."
             )
             await interaction.response.send_message(embed=embed)
             return
@@ -1307,9 +1296,10 @@ async def timely(interaction: discord.Interaction):
                 """,
                 (interaction.user.id, now.isoformat()),
             )
+    next_claim_unix = int((now + timedelta(hours=5)).timestamp())
     embed.description = (
-        f"{interaction.user.mention}, Вы успешно **забрали** свои **50** 🪙! "
-        "Возвращайтесь через 12 часов"
+        f"{interaction.user.mention}, Вы успешно **забрали** свои **50** 🪙!\n\n"
+        f"Возвращайтесь <t:{next_claim_unix}:R>."
     )
 
     if bot.user is not None:
@@ -1331,12 +1321,20 @@ async def top(interaction: discord.Interaction):
     rows = await get_top_message_counts(interaction.guild.id)
     lines = []
     medals = ["🥇", "🥈", "🥉"]
-    for index, row in enumerate(rows, start=1):
+    visible_position = 0
+
+    for row in rows:
         member = interaction.guild.get_member(int(row["user_id"]))
         if member is None or member.bot:
             continue
+
+        visible_position += 1
         count = int(row["count"])
-        prefix = medals[index - 1] if index <= 3 else f"**{index}.**"
+        prefix = (
+            medals[visible_position - 1]
+            if visible_position <= 3
+            else f"**{visible_position}.**"
+        )
         lines.append(
             f"{prefix} {member.mention} — **{count} {russian_message_word(count)}**"
         )
