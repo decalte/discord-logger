@@ -1014,13 +1014,30 @@ async def on_guild_role_create(role: discord.Role):
     if not log_channel:
         return
 
-    await asyncio.sleep(1)
+    # Некоторые боты сначала создают роль с временным названием и цветом,
+    # а затем сразу изменяют её. Ждём и получаем свежие данные с Discord.
+    await asyncio.sleep(3)
+
+    fresh_role = role
+    try:
+        roles = await role.guild.fetch_roles()
+        fresh_role = next(
+            (guild_role for guild_role in roles if guild_role.id == role.id),
+            role,
+        )
+    except (discord.Forbidden, discord.HTTPException):
+        pass
+
     audit = await find_audit_entry(
         role.guild,
         discord.AuditLogAction.role_create,
         role.id,
+        max_age=30,
     )
     actor_text = member_id_text(audit.user) if audit else "Не удалось определить"
+
+    role_mention = f"<@&{fresh_role.id}>"
+    color_code = f"#{fresh_role.color.value:06X}"
 
     embed = discord.Embed(
         title="Создание роли",
@@ -1034,12 +1051,12 @@ async def on_guild_role_create(role: discord.Role):
     )
     embed.add_field(
         name="Название",
-        value=f"> {role.mention}",
+        value=f"> {role_mention}",
         inline=False,
     )
     embed.add_field(
         name="Цвет",
-        value=f"> {str(role.color).upper()}",
+        value=f"> {color_code}",
         inline=False,
     )
     await log_channel.send(embed=embed)
@@ -1695,41 +1712,55 @@ def _get_love_profile_template() -> Image.Image:
 
 @lru_cache(maxsize=1)
 def _find_profile_fonts() -> tuple[str | None, str | None]:
-    """Находит нормальный системный шрифт с кириллицей на Linux/Windows/macOS."""
-    regular_names = (
-        "LiberationSans-Regular.ttf",
+    """Ищет шрифт с кириллицей. Сначала пробует системные имена напрямую."""
+    direct_regular = (
         "DejaVuSans.ttf",
+        "LiberationSans-Regular.ttf",
         "NotoSans-Regular.ttf",
         "FreeSans.ttf",
         "Arial.ttf",
         "arial.ttf",
     )
-    bold_names = (
-        "LiberationSans-Bold.ttf",
+    direct_bold = (
         "DejaVuSans-Bold.ttf",
+        "LiberationSans-Bold.ttf",
         "NotoSans-Bold.ttf",
         "FreeSansBold.ttf",
         "Arial Bold.ttf",
         "arialbd.ttf",
     )
+
+    def direct(names: tuple[str, ...]) -> str | None:
+        for name in names:
+            try:
+                ImageFont.truetype(name, size=20)
+                return name
+            except OSError:
+                continue
+        return None
+
+    regular = direct(direct_regular)
+    bold = direct(direct_bold)
+    if regular and bold:
+        return regular, bold
+
     roots = (
         Path("/usr/share/fonts"),
         Path("/usr/local/share/fonts"),
-        Path("/usr/local/lib"),
+        Path("/usr/local/lib/python3.11/site-packages"),
+        Path("/usr/local/lib/python3.12/site-packages"),
+        Path("/usr/local/lib/python3.13/site-packages"),
+        Path("/opt/pyvenv/lib"),
         Path("/System/Library/Fonts"),
         Path("C:/Windows/Fonts"),
     )
 
     def find(names: tuple[str, ...]) -> str | None:
+        lowered = {name.lower() for name in names}
         for root in roots:
             if not root.exists():
                 continue
-            for name in names:
-                direct = root / name
-                if direct.exists():
-                    return str(direct)
             try:
-                lowered = {name.lower() for name in names}
                 for candidate in root.rglob("*.ttf"):
                     if candidate.name.lower() in lowered:
                         return str(candidate)
@@ -1737,24 +1768,23 @@ def _find_profile_fonts() -> tuple[str | None, str | None]:
                 continue
         return None
 
-    return find(regular_names), find(bold_names)
+    return regular or find(direct_regular), bold or find(direct_bold)
 
 
 @lru_cache(maxsize=96)
-def _load_profile_font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+def _load_profile_font(
+    size: int,
+    *,
+    bold: bool = False,
+) -> ImageFont.FreeTypeFont:
     regular_path, bold_path = _find_profile_fonts()
     font_path = bold_path if bold else regular_path
-    if font_path:
-        try:
-            return ImageFont.truetype(font_path, size=size)
-        except OSError:
-            pass
-
-    # В Pillow 10+ встроенный шрифт можно масштабировать; это лучше мелкого bitmap fallback.
-    try:
-        return ImageFont.load_default(size=size)
-    except TypeError:
-        return ImageFont.load_default()
+    if not font_path:
+        raise RuntimeError(
+            "На хостинге не найден кириллический шрифт DejaVu Sans. "
+            "Установите пакет fonts-dejavu-core."
+        )
+    return ImageFont.truetype(font_path, size=size)
 
 
 def _fit_profile_text(draw, text: str, max_width: int, preferred_size: int, *, bold: bool = False, minimum_size: int = 18):
@@ -1791,11 +1821,13 @@ def _circle_avatar(avatar_bytes: bytes | None, size: int) -> Image.Image:
     return avatar
 
 
-def _soft_erase(image: Image.Image, box: tuple[int, int, int, int], radius: int = 18) -> None:
-    """Размывает только демонстрационное значение, сохраняя фон и градиент панели."""
-    crop = image.crop(box)
-    crop = crop.filter(ImageFilter.GaussianBlur(radius=radius))
-    image.paste(crop, box)
+def _cover_value(
+    image: Image.Image,
+    box: tuple[int, int, int, int],
+    fill: tuple[int, int, int, int],
+) -> None:
+    """Закрывает только демонстрационное значение, не затрагивая подписи и панели."""
+    ImageDraw.Draw(image).rectangle(box, fill=fill)
 
 
 def _build_profile_image(
@@ -1807,38 +1839,38 @@ def _build_profile_image(
     voice_seconds: int,
     role_name: str,
 ) -> io.BytesIO:
-    """Рисует актуальные данные строго поверх оригинального шаблона 1536x704."""
+    """Рисует только данные поверх оригинального шаблона 1536x704."""
     image = _get_profile_template().copy()
+
+    # Узкие области — только там, где в шаблоне стоят демонстрационные значения.
+    covers = (
+        ((695, 140, 890, 194), (62, 62, 62, 255)),
+        ((1130, 140, 1340, 194), (47, 47, 47, 255)),
+        ((665, 320, 920, 390), (49, 49, 49, 255)),
+        ((1130, 320, 1360, 390), (44, 44, 44, 255)),
+        ((688, 500, 900, 590), (43, 43, 43, 255)),
+        ((1138, 500, 1350, 590), (32, 32, 32, 255)),
+    )
+    for box, fill in covers:
+        _cover_value(image, box, fill)
+
+    # Аватары точно по кругам шаблона.
+    image.alpha_composite(_circle_avatar(avatar_bytes, 203), (218, 142))
+    image.alpha_composite(_circle_avatar(avatar_bytes, 66), (608, 510))
+    image.alpha_composite(_circle_avatar(avatar_bytes, 66), (1058, 510))
+
     draw = ImageDraw.Draw(image)
     white = (247, 247, 249, 255)
     muted = (205, 205, 210, 255)
 
-    # Удаляем только демонстрационные значения. Градиенты и панели остаются родными.
-    for box in (
-        (670, 132, 915, 190),      # топ
-        (1100, 132, 1350, 190),    # баланс
-        (670, 310, 920, 390),      # онлайн
-        (1110, 310, 1345, 390),    # сообщения
-        (692, 505, 900, 585),      # нижняя левая карточка
-        (1142, 505, 1350, 585),    # нижняя правая карточка
-    ):
-        _soft_erase(image, box)
-
-    # Аватары.
-    image.alpha_composite(_circle_avatar(avatar_bytes, 203), (218, 142))
-    image.alpha_composite(_circle_avatar(avatar_bytes, 66), (608, 510))
-    image.alpha_composite(_circle_avatar(avatar_bytes, 66), (1058, 510))
-    draw = ImageDraw.Draw(image)
-
     voice_minutes = max(0, voice_seconds // 60)
     voice_text = f"{voice_minutes // 60}ч {voice_minutes % 60}м"
 
-    # Крупные значения — размеры как в присланном образце.
     values = (
-        ((650, 132, 935, 198), str(rank), 52, 32),
-        ((1080, 132, 1380, 198), str(coins), 52, 30),
-        ((640, 310, 945, 405), voice_text, 50, 30),
-        ((1080, 310, 1380, 405), str(message_count), 52, 30),
+        ((650, 132, 935, 198), str(rank), 52, 34),
+        ((1080, 132, 1380, 198), str(coins), 52, 34),
+        ((640, 310, 945, 405), voice_text, 50, 32),
+        ((1080, 310, 1380, 405), str(message_count), 52, 34),
     )
     for box, value, preferred, minimum in values:
         font = _fit_profile_text(
@@ -1851,26 +1883,31 @@ def _build_profile_image(
         )
         _draw_centered_text(draw, box, value, font, white)
 
-    # Нижние карточки.
-    left_name_font = _fit_profile_text(draw, username, 205, 29, bold=True, minimum_size=19)
-    draw.text((704, 510), username, font=left_name_font, fill=white)
+    left_name_font = _fit_profile_text(
+        draw, username, 190, 29, bold=True, minimum_size=19
+    )
+    draw.text((704, 508), username, font=left_name_font, fill=white)
     draw.text(
-        (704, 550),
+        (704, 548),
         f"Онлайн: {voice_minutes // 60}ч",
         font=_load_profile_font(21),
         fill=muted,
     )
 
-    right_name_font = _fit_profile_text(draw, username, 205, 29, bold=True, minimum_size=19)
-    draw.text((1154, 510), username, font=right_name_font, fill=white)
-    role_font = _fit_profile_text(draw, role_name, 205, 21, minimum_size=16)
-    draw.text((1154, 550), role_name, font=role_font, fill=muted)
+    right_name_font = _fit_profile_text(
+        draw, username, 190, 29, bold=True, minimum_size=19
+    )
+    draw.text((1154, 508), username, font=right_name_font, fill=white)
+    role_font = _fit_profile_text(
+        draw, role_name, 190, 21, minimum_size=16
+    )
+    draw.text((1154, 548), role_name, font=role_font, fill=muted)
 
     result = io.BytesIO()
     image.convert("RGB").save(
         result,
         format="JPEG",
-        quality=97,
+        quality=98,
         subsampling=0,
         optimize=True,
     )
@@ -1886,24 +1923,23 @@ def _build_love_profile_image(
     combined_voice_seconds: int,
     room_name: str,
 ) -> io.BytesIO:
-    """Рисует любовный профиль строго по оригинальному шаблону 1536x704."""
+    """Рисует только актуальные данные поверх шаблона пары 1536x704."""
     image = _get_love_profile_template().copy()
-    draw = ImageDraw.Draw(image)
-    white = (247, 247, 249, 255)
 
-    # Удаляем только демонстрационные значения без прямоугольных заливок.
-    for box in (
-        (1015, 125, 1225, 188),    # баланс
-        (1000, 300, 1240, 370),    # дни вместе
-        (470, 405, 675, 480),      # онлайн
-        (850, 475, 1245, 550),     # название комнаты
-    ):
-        _soft_erase(image, box)
+    covers = (
+        ((1030, 125, 1215, 185), (43, 43, 43, 255)),
+        ((1000, 302, 1240, 365), (43, 43, 43, 255)),
+        ((475, 405, 675, 475), (38, 38, 38, 255)),
+        ((850, 475, 1245, 545), (40, 40, 40, 255)),
+    )
+    for box, fill in covers:
+        _cover_value(image, box, fill)
 
-    # Аватары точно в два круглых места шаблона.
     image.alpha_composite(_circle_avatar(first_avatar_bytes, 142), (373, 181))
     image.alpha_composite(_circle_avatar(second_avatar_bytes, 142), (623, 181))
+
     draw = ImageDraw.Draw(image)
+    white = (247, 247, 249, 255)
 
     voice_hours = max(0, combined_voice_seconds // 3600)
     voice_text = f"{voice_hours}ч"
@@ -1917,13 +1953,13 @@ def _build_love_profile_image(
     )
     days_text = f"{together_days} {days_word}"
 
-    love_values = (
-        ((975, 120, 1265, 195), str(combined_coins), 50, 30),
-        ((950, 290, 1270, 380), days_text, 45, 28),
-        ((445, 395, 700, 490), voice_text, 58, 34),
-        ((825, 462, 1275, 555), room_name, 42, 24),
+    values = (
+        ((975, 118, 1265, 195), str(combined_coins), 50, 32),
+        ((950, 288, 1270, 380), days_text, 45, 30),
+        ((445, 392, 700, 490), voice_text, 58, 36),
+        ((825, 460, 1275, 555), room_name, 42, 26),
     )
-    for box, value, preferred, minimum in love_values:
+    for box, value, preferred, minimum in values:
         font = _fit_profile_text(
             draw,
             value,
@@ -1938,7 +1974,7 @@ def _build_love_profile_image(
     image.convert("RGB").save(
         result,
         format="JPEG",
-        quality=97,
+        quality=98,
         subsampling=0,
         optimize=True,
     )
