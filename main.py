@@ -8,6 +8,7 @@ import math
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
 
 import discord
@@ -3612,7 +3613,7 @@ async def timely(interaction: discord.Interaction):
         log_embed = discord.Embed(title="Выдача временной награды", color=COLOR)
         log_embed.add_field(name="Выдал(а)", value=member_id_text(bot.user), inline=False)
         log_embed.add_field(name="Пользователю", value=member_id_text(interaction.user), inline=False)
-        log_embed.add_field(name="Количество монет", value=f"50 {COIN_EMOJI}", inline=False)
+        log_embed.add_field(name="Количество монет", value=f"> 50 {COIN_EMOJI}", inline=False)
         log_embed.set_footer(text=russian_time())
         await send_economy_log(interaction.guild, log_embed)
 
@@ -3657,6 +3658,17 @@ async def top(interaction: discord.Interaction):
 # -----------------------------------------------------------------------------
 # /profile
 # -----------------------------------------------------------------------------
+
+@lru_cache(maxsize=1)
+def _get_profile_template() -> Image.Image:
+    """Декодирует и подготавливает шаблон только один раз за запуск бота."""
+    raw = base64.b64decode(PROFILE_TEMPLATE_B64)
+    image = Image.open(io.BytesIO(raw)).convert("RGBA")
+    if image.size != PROFILE_IMAGE_SIZE:
+        image = image.resize(PROFILE_IMAGE_SIZE, Image.Resampling.LANCZOS)
+    image.load()
+    return image
+
 
 def _load_profile_font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     candidates = (
@@ -3727,8 +3739,7 @@ def _build_profile_image(
     partner_name: str | None,
     partner_avatar_bytes: bytes | None,
 ) -> io.BytesIO:
-    background = Image.open(io.BytesIO(base64.b64decode(PROFILE_TEMPLATE_B64))).convert("RGBA")
-    background = background.resize(PROFILE_IMAGE_SIZE, Image.Resampling.LANCZOS)
+    background = _get_profile_template().copy()
     overlay = Image.new("RGBA", background.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
@@ -3805,7 +3816,7 @@ def _build_profile_image(
     draw.text((1154, 548), right_subtitle, font=right_role_font, fill=muted)
 
     result = io.BytesIO()
-    background.convert("RGB").save(result, format="PNG", quality=95)
+    background.convert("RGB").save(result, format="PNG", compress_level=1)
     result.seek(0)
     return result
 
@@ -3816,7 +3827,7 @@ class MarryProposalView(discord.ui.View):
         proposer: discord.Member,
         recipient: discord.Member,
     ):
-        super().__init__(timeout=60)
+        super().__init__(timeout=300)
         self.proposer = proposer
         self.recipient = recipient
         self.message: discord.Message | None = None
@@ -3926,7 +3937,7 @@ class MarryProposalView(discord.ui.View):
 
             if self.message is not None:
                 try:
-                    await self.message.edit(embed=embed, view=self)
+                    await self.message.edit(embed=embed, view=None)
                 except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                     pass
 
@@ -4103,36 +4114,62 @@ async def profile(
     partner_id = await get_marriage_partner_id(interaction.guild.id, target.id)
     partner = interaction.guild.get_member(partner_id) if partner_id else None
 
-    try:
-        avatar_bytes = await target.display_avatar.with_size(512).read()
-    except (discord.HTTPException, OSError):
-        avatar_bytes = None
-
-    partner_avatar_bytes = None
-    if partner is not None:
+    async def read_avatar(member: discord.abc.User, size: int) -> bytes | None:
         try:
-            partner_avatar_bytes = await partner.display_avatar.with_size(256).read()
-        except (discord.HTTPException, OSError):
-            partner_avatar_bytes = None
+            return await asyncio.wait_for(
+                member.display_avatar.with_size(size).read(),
+                timeout=5,
+            )
+        except (asyncio.TimeoutError, discord.HTTPException, OSError):
+            return None
+
+    avatar_tasks = [read_avatar(target, 512)]
+    if partner is not None:
+        avatar_tasks.append(read_avatar(partner, 256))
+
+    avatar_results = await asyncio.gather(*avatar_tasks)
+    avatar_bytes = avatar_results[0]
+    partner_avatar_bytes = avatar_results[1] if partner is not None else None
 
     role_name = "Участник"
     if isinstance(target, discord.Member):
-        visible_roles = [role for role in target.roles if not role.is_default() and not role.managed]
+        visible_roles = [
+            role
+            for role in target.roles
+            if not role.is_default() and not role.managed
+        ]
         if visible_roles:
             role_name = visible_roles[-1].name
 
-    image = await asyncio.to_thread(
-        _build_profile_image,
-        avatar_bytes,
-        target.display_name,
-        rank,
-        coins,
-        message_count,
-        voice_seconds,
-        role_name,
-        partner.display_name if partner else None,
-        partner_avatar_bytes,
-    )
+    try:
+        image = await asyncio.wait_for(
+            asyncio.to_thread(
+                _build_profile_image,
+                avatar_bytes,
+                target.display_name,
+                rank,
+                coins,
+                message_count,
+                voice_seconds,
+                role_name,
+                partner.display_name if partner else None,
+                partner_avatar_bytes,
+            ),
+            timeout=10,
+        )
+    except asyncio.TimeoutError:
+        await interaction.followup.send(
+            "Не удалось быстро создать профиль. Попробуйте ещё раз.",
+            ephemeral=True,
+        )
+        return
+    except Exception as error:
+        print(f"Ошибка генерации профиля пользователя {target.id}: {error!r}")
+        await interaction.followup.send(
+            "Произошла ошибка при создании профиля.",
+            ephemeral=True,
+        )
+        return
 
     file = discord.File(image, filename=f"profile_{target.id}.png")
     view = ProfileMarriageView(target, partner) if partner is not None else None
@@ -4196,7 +4233,7 @@ class CurrencySelectView(discord.ui.View):
         )
         log_embed.add_field(
             name=f"Количество {currency_ru}",
-            value=f"{self.amount} {currency_emoji}",
+            value=f"> {self.amount} {currency_emoji}",
             inline=False,
         )
         log_embed.set_footer(text=russian_time())
@@ -4293,12 +4330,12 @@ class GiveView(discord.ui.View):
             log_embed = discord.Embed(title="Передача монет", color=COLOR)
             log_embed.add_field(name="Выдал(а)", value=member_id_text(self.sender), inline=False)
             log_embed.add_field(name="Пользователю", value=member_id_text(self.recipient), inline=False)
-            log_embed.add_field(name="Количество монет", value=f"{self.amount} {COIN_EMOJI}", inline=False)
-            log_embed.add_field(name="Комиссия", value=f"{fee} {COIN_EMOJI}", inline=False)
-            log_embed.add_field(name="Получено пользователем", value=f"{self.amount} {COIN_EMOJI}", inline=False)
+            log_embed.add_field(name="Количество монет", value=f"> {self.amount} {COIN_EMOJI}", inline=False)
+            log_embed.add_field(name="Комиссия", value=f"> {fee} {COIN_EMOJI}", inline=False)
+            log_embed.add_field(name="Получено пользователем", value=f"> {self.amount} {COIN_EMOJI}", inline=False)
             log_embed.add_field(
                 name="Списано у отправителя",
-                value=f"{self.amount + fee} {COIN_EMOJI}",
+                value=f"> {self.amount + fee} {COIN_EMOJI}",
                 inline=False,
             )
             log_embed.set_footer(text=russian_time())
