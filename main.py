@@ -1014,25 +1014,38 @@ async def on_guild_role_create(role: discord.Role):
     if not log_channel:
         return
 
-    # Некоторые боты сначала создают роль с временным названием и цветом,
-    # а затем сразу изменяют её. Ждём и получаем свежие данные с Discord.
-    await asyncio.sleep(3)
-
+    # Discord/боты часто создают роль с временными параметрами, а цвет задают
+    # отдельным обновлением. Получаем роль повторно несколько раз и берём
+    # последнее актуальное состояние.
     fresh_role = role
-    try:
-        roles = await role.guild.fetch_roles()
-        fresh_role = next(
-            (guild_role for guild_role in roles if guild_role.id == role.id),
-            role,
-        )
-    except (discord.Forbidden, discord.HTTPException):
-        pass
+    last_signature = None
+    stable_checks = 0
+
+    for _ in range(12):
+        await asyncio.sleep(1)
+        try:
+            roles = await role.guild.fetch_roles()
+            current = next((item for item in roles if item.id == role.id), None)
+            if current is None:
+                continue
+            fresh_role = current
+            signature = (current.name, current.color.value)
+            if signature == last_signature:
+                stable_checks += 1
+            else:
+                stable_checks = 0
+                last_signature = signature
+            # Два одинаковых ответа подряд после появления ненулевого цвета.
+            if stable_checks >= 2 and current.color.value != 0:
+                break
+        except (discord.Forbidden, discord.HTTPException):
+            break
 
     audit = await find_audit_entry(
         role.guild,
         discord.AuditLogAction.role_create,
         role.id,
-        max_age=30,
+        max_age=45,
     )
     actor_text = member_id_text(audit.user) if audit else "Не удалось определить"
 
@@ -1044,19 +1057,40 @@ async def on_guild_role_create(role: discord.Role):
         color=COLOR,
         timestamp=moscow_time(),
     )
+    embed.add_field(name="Создал(а)", value=actor_text, inline=False)
+    embed.add_field(name="Название", value=f"> {role_mention}", inline=False)
+    embed.add_field(name="Цвет", value=f"> {color_code}", inline=False)
+    await log_channel.send(embed=embed)
+
+
+@bot.event
+async def on_guild_role_delete(role: discord.Role):
+    log_channel = get_channel(role.guild, ROLE_LOG_CHANNEL_ID)
+    if not log_channel:
+        return
+
+    await asyncio.sleep(1)
+    audit = await find_audit_entry(
+        role.guild,
+        discord.AuditLogAction.role_delete,
+        role.id,
+        max_age=30,
+    )
+    actor_text = member_id_text(audit.user) if audit else "Не удалось определить"
+
+    embed = discord.Embed(
+        title="Удаление роли",
+        color=COLOR,
+        timestamp=moscow_time(),
+    )
     embed.add_field(
-        name="Создал(а)",
+        name="Удалил(а)",
         value=actor_text,
         inline=False,
     )
     embed.add_field(
-        name="Название",
-        value=f"> {role_mention}",
-        inline=False,
-    )
-    embed.add_field(
-        name="Цвет",
-        value=f"> {color_code}",
+        name="Название роли",
+        value=f"> @{role.name}",
         inline=False,
     )
     await log_channel.send(embed=embed)
@@ -1712,51 +1746,38 @@ def _get_love_profile_template() -> Image.Image:
 
 @lru_cache(maxsize=1)
 def _find_profile_fonts() -> tuple[str | None, str | None]:
-    """Ищет шрифт с кириллицей. Сначала пробует системные имена напрямую."""
-    direct_regular = (
-        "DejaVuSans.ttf",
-        "LiberationSans-Regular.ttf",
-        "NotoSans-Regular.ttf",
-        "FreeSans.ttf",
-        "Arial.ttf",
-        "arial.ttf",
-    )
-    direct_bold = (
-        "DejaVuSans-Bold.ttf",
-        "LiberationSans-Bold.ttf",
-        "NotoSans-Bold.ttf",
-        "FreeSansBold.ttf",
-        "Arial Bold.ttf",
-        "arialbd.ttf",
-    )
+    """Возвращает DejaVu Sans с поддержкой кириллицы."""
+    # Matplotlib устанавливается через requirements.txt и содержит DejaVu Sans.
+    try:
+        from matplotlib import font_manager
 
-    def direct(names: tuple[str, ...]) -> str | None:
-        for name in names:
-            try:
-                ImageFont.truetype(name, size=20)
-                return name
-            except OSError:
-                continue
-        return None
+        regular = font_manager.findfont(
+            font_manager.FontProperties(family="DejaVu Sans", weight="normal"),
+            fallback_to_default=True,
+        )
+        bold = font_manager.findfont(
+            font_manager.FontProperties(family="DejaVu Sans", weight="bold"),
+            fallback_to_default=True,
+        )
+        if Path(regular).exists() and Path(bold).exists():
+            return regular, bold
+    except Exception:
+        pass
 
-    regular = direct(direct_regular)
-    bold = direct(direct_bold)
-    if regular and bold:
-        return regular, bold
-
+    # Резервный поиск системных шрифтов.
+    names = {
+        "regular": ("DejaVuSans.ttf", "LiberationSans-Regular.ttf", "NotoSans-Regular.ttf"),
+        "bold": ("DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf", "NotoSans-Bold.ttf"),
+    }
     roots = (
         Path("/usr/share/fonts"),
         Path("/usr/local/share/fonts"),
-        Path("/usr/local/lib/python3.11/site-packages"),
-        Path("/usr/local/lib/python3.12/site-packages"),
-        Path("/usr/local/lib/python3.13/site-packages"),
-        Path("/opt/pyvenv/lib"),
         Path("/System/Library/Fonts"),
         Path("C:/Windows/Fonts"),
     )
 
-    def find(names: tuple[str, ...]) -> str | None:
-        lowered = {name.lower() for name in names}
+    def find(candidates: tuple[str, ...]) -> str | None:
+        lowered = {name.lower() for name in candidates}
         for root in roots:
             if not root.exists():
                 continue
@@ -1768,7 +1789,7 @@ def _find_profile_fonts() -> tuple[str | None, str | None]:
                 continue
         return None
 
-    return regular or find(direct_regular), bold or find(direct_bold)
+    return find(names["regular"]), find(names["bold"])
 
 
 @lru_cache(maxsize=96)
@@ -1776,15 +1797,20 @@ def _load_profile_font(
     size: int,
     *,
     bold: bool = False,
-) -> ImageFont.FreeTypeFont:
+) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     regular_path, bold_path = _find_profile_fonts()
     font_path = bold_path if bold else regular_path
-    if not font_path:
-        raise RuntimeError(
-            "На хостинге не найден кириллический шрифт DejaVu Sans. "
-            "Установите пакет fonts-dejavu-core."
-        )
-    return ImageFont.truetype(font_path, size=size)
+    if font_path:
+        try:
+            return ImageFont.truetype(font_path, size=size)
+        except OSError:
+            pass
+
+    # Команда не падает даже при проблеме со шрифтом.
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
 
 
 def _fit_profile_text(draw, text: str, max_width: int, preferred_size: int, *, bold: bool = False, minimum_size: int = 18):
@@ -2348,7 +2374,7 @@ async def profile(interaction: discord.Interaction, user: discord.Member | None 
         return
     except Exception as error:
         print(f"Ошибка генерации профиля пользователя {target.id}: {error!r}")
-        await interaction.followup.send("Произошла ошибка при создании профиля.", ephemeral=True)
+        await interaction.followup.send("Не удалось создать профиль. Проверьте, что в requirements.txt есть matplotlib и Pillow.", ephemeral=True)
         return
 
     file = discord.File(image, filename=f"profile_{target.id}.jpg")
