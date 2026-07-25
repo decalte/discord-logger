@@ -15,7 +15,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 
 TOKEN = os.getenv("TOKEN")
@@ -651,13 +651,27 @@ def russian_time(value: datetime | None = None) -> str:
     return moscow_time(value).strftime("Сегодня, в %H:%M")
 
 
-def discord_full_timestamp(value: datetime | None = None) -> str:
-    """Динамическая дата Discord с локальным часовым поясом каждого пользователя."""
+def log_datetime(value: datetime | None = None) -> str:
+    """Красивое время для логов без жирного текста, кавычек и code-блоков."""
     if value is None:
         value = datetime.now(timezone.utc)
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
-    return f"<t:{int(value.timestamp())}:F>"
+
+    local = moscow_time(value)
+    today = moscow_time().date()
+    time_text = local.strftime("%I:%M %p").lstrip("0")
+
+    if local.date() == today:
+        return f"Сегодня, в {time_text}"
+    if local.date() == today - timedelta(days=1):
+        return f"Вчера, в {time_text}"
+
+    months = (
+        "января", "февраля", "марта", "апреля", "мая", "июня",
+        "июля", "августа", "сентября", "октября", "ноября", "декабря",
+    )
+    return f"{local.day} {months[local.month - 1]} {local.year}, в {time_text}"
 
 
 def russian_datetime(value: datetime) -> str:
@@ -995,6 +1009,43 @@ async def role_change_logs(before: discord.Member, after: discord.Member):
 
 
 @bot.event
+async def on_guild_role_create(role: discord.Role):
+    log_channel = get_channel(role.guild, ROLE_LOG_CHANNEL_ID)
+    if not log_channel:
+        return
+
+    await asyncio.sleep(1)
+    audit = await find_audit_entry(
+        role.guild,
+        discord.AuditLogAction.role_create,
+        role.id,
+    )
+    actor_text = member_id_text(audit.user) if audit else "Не удалось определить"
+
+    embed = discord.Embed(
+        title="Создание роли",
+        color=COLOR,
+        timestamp=moscow_time(),
+    )
+    embed.add_field(
+        name="Создал(а)",
+        value=actor_text,
+        inline=False,
+    )
+    embed.add_field(
+        name="Название",
+        value=f"> {role.mention}",
+        inline=False,
+    )
+    embed.add_field(
+        name="Цвет",
+        value=f"> {str(role.color).upper()}",
+        inline=False,
+    )
+    await log_channel.send(embed=embed)
+
+
+@bot.event
 async def on_guild_role_update(before: discord.Role, after: discord.Role):
     name_changed = before.name != after.name
     color_changed = before.color != after.color
@@ -1066,7 +1117,7 @@ async def on_member_remove(member: discord.Member):
         return
     embed = discord.Embed(title="Выход с сервера", color=COLOR)
     embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
-    embed.add_field(name="Дата и время выхода", value=f"> {discord_full_timestamp()}", inline=False)
+    embed.add_field(name="Дата и время выхода", value=f"> {log_datetime()}", inline=False)
     await log_channel.send(embed=embed)
 
 
@@ -1149,7 +1200,7 @@ async def on_guild_channel_create(channel):
             value="\n".join(f"> {role}" for role in visible_roles) or "> @everyone",
             inline=False,
         )
-    embed.add_field(name="Дата и время создания", value=f"> {discord_full_timestamp(channel.created_at)}", inline=False)
+    embed.add_field(name="Дата и время создания", value=f"> {log_datetime(channel.created_at)}", inline=False)
     await log_channel.send(embed=embed)
 
 
@@ -1183,7 +1234,7 @@ async def on_guild_channel_delete(channel):
             value="\n".join(f"> {role}" for role in visible_roles) or "> @everyone",
             inline=False,
         )
-    embed.add_field(name="Дата и время удаления", value=f"> {discord_full_timestamp()}", inline=False)
+    embed.add_field(name="Дата и время удаления", value=f"> {log_datetime()}", inline=False)
     await log_channel.send(embed=embed)
 
 
@@ -1208,7 +1259,7 @@ async def on_guild_channel_update(before, after):
     embed = discord.Embed(title=title, color=COLOR)
     embed.add_field(name="Изменил(а)", value=actor_text, inline=False)
     embed.add_field(name=field_name, value=f"> {value}", inline=False)
-    embed.add_field(name="Дата и время изменения", value=f"> {discord_full_timestamp()}", inline=False)
+    embed.add_field(name="Дата и время изменения", value=f"> {log_datetime()}", inline=False)
     await log_channel.send(embed=embed)
 
 
@@ -1246,7 +1297,7 @@ async def activate_antichrash(member: discord.Member, reason: str):
         embed = discord.Embed(title="Выдача антикраша", color=COLOR)
         embed.add_field(name="Администратору", value=member_id_text(member), inline=False)
         embed.add_field(name="Причина выдачи", value=f"> {reason}", inline=False)
-        embed.add_field(name="Дата и время выдачи", value=f"> {discord_full_timestamp()}", inline=False)
+        embed.add_field(name="Дата и время выдачи", value=f"> {log_datetime()}", inline=False)
         await log_channel.send(embed=embed, view=AntiCrashView(member.guild.id, member.id))
 
 
@@ -1300,7 +1351,7 @@ class AntiCrashView(discord.ui.View):
                 value="\n".join(f"> {role.mention}" for role in roles if role != booster_role) or "> Роли отсутствуют",
                 inline=False,
             )
-            embed.add_field(name="Дата и время снятия", value=f"> {discord_full_timestamp()}", inline=False)
+            embed.add_field(name="Дата и время снятия", value=f"> {log_datetime()}", inline=False)
             await interaction.followup.send(embed=embed)
 
 
@@ -1642,18 +1693,68 @@ def _get_love_profile_template() -> Image.Image:
     return image
 
 
-@lru_cache(maxsize=64)
-def _load_profile_font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    candidates = (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
+@lru_cache(maxsize=1)
+def _find_profile_fonts() -> tuple[str | None, str | None]:
+    """Находит нормальный системный шрифт с кириллицей на Linux/Windows/macOS."""
+    regular_names = (
+        "LiberationSans-Regular.ttf",
+        "DejaVuSans.ttf",
+        "NotoSans-Regular.ttf",
+        "FreeSans.ttf",
+        "Arial.ttf",
+        "arial.ttf",
     )
-    for font_path in candidates:
-        if Path(font_path).exists():
+    bold_names = (
+        "LiberationSans-Bold.ttf",
+        "DejaVuSans-Bold.ttf",
+        "NotoSans-Bold.ttf",
+        "FreeSansBold.ttf",
+        "Arial Bold.ttf",
+        "arialbd.ttf",
+    )
+    roots = (
+        Path("/usr/share/fonts"),
+        Path("/usr/local/share/fonts"),
+        Path("/usr/local/lib"),
+        Path("/System/Library/Fonts"),
+        Path("C:/Windows/Fonts"),
+    )
+
+    def find(names: tuple[str, ...]) -> str | None:
+        for root in roots:
+            if not root.exists():
+                continue
+            for name in names:
+                direct = root / name
+                if direct.exists():
+                    return str(direct)
+            try:
+                lowered = {name.lower() for name in names}
+                for candidate in root.rglob("*.ttf"):
+                    if candidate.name.lower() in lowered:
+                        return str(candidate)
+            except OSError:
+                continue
+        return None
+
+    return find(regular_names), find(bold_names)
+
+
+@lru_cache(maxsize=96)
+def _load_profile_font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    regular_path, bold_path = _find_profile_fonts()
+    font_path = bold_path if bold else regular_path
+    if font_path:
+        try:
             return ImageFont.truetype(font_path, size=size)
-    return ImageFont.load_default()
+        except OSError:
+            pass
+
+    # В Pillow 10+ встроенный шрифт можно масштабировать; это лучше мелкого bitmap fallback.
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
 
 
 def _fit_profile_text(draw, text: str, max_width: int, preferred_size: int, *, bold: bool = False, minimum_size: int = 18):
@@ -1690,8 +1791,11 @@ def _circle_avatar(avatar_bytes: bytes | None, size: int) -> Image.Image:
     return avatar
 
 
-def _cover(draw, box, fill):
-    draw.rectangle(box, fill=fill)
+def _soft_erase(image: Image.Image, box: tuple[int, int, int, int], radius: int = 18) -> None:
+    """Размывает только демонстрационное значение, сохраняя фон и градиент панели."""
+    crop = image.crop(box)
+    crop = crop.filter(ImageFilter.GaussianBlur(radius=radius))
+    image.paste(crop, box)
 
 
 def _build_profile_image(
@@ -1703,43 +1807,73 @@ def _build_profile_image(
     voice_seconds: int,
     role_name: str,
 ) -> io.BytesIO:
-    """Рисует только актуальные данные поверх оригинального шаблона профиля."""
+    """Рисует актуальные данные строго поверх оригинального шаблона 1536x704."""
     image = _get_profile_template().copy()
     draw = ImageDraw.Draw(image)
-    white = (246, 246, 248, 255)
-    muted = (205, 205, 208, 255)
+    white = (247, 247, 249, 255)
+    muted = (205, 205, 210, 255)
 
-    # Закрываем только старые демонстрационные значения, сохраняя дизайн шаблона.
-    _cover(draw, (650, 132, 930, 190), (49, 49, 49, 255))
-    _cover(draw, (1080, 132, 1370, 190), (49, 49, 49, 255))
-    _cover(draw, (640, 312, 940, 392), (48, 48, 48, 255))
-    _cover(draw, (1090, 312, 1370, 392), (48, 48, 48, 255))
-    _cover(draw, (688, 510, 900, 582), (39, 39, 39, 255))
-    _cover(draw, (1138, 510, 1350, 582), (39, 39, 39, 255))
+    # Удаляем только демонстрационные значения. Градиенты и панели остаются родными.
+    for box in (
+        (670, 132, 915, 190),      # топ
+        (1100, 132, 1350, 190),    # баланс
+        (670, 310, 920, 390),      # онлайн
+        (1110, 310, 1345, 390),    # сообщения
+        (692, 505, 900, 585),      # нижняя левая карточка
+        (1142, 505, 1350, 585),    # нижняя правая карточка
+    ):
+        _soft_erase(image, box)
 
-    # Аватары точно поверх мест из образца.
+    # Аватары.
     image.alpha_composite(_circle_avatar(avatar_bytes, 203), (218, 142))
     image.alpha_composite(_circle_avatar(avatar_bytes, 66), (608, 510))
     image.alpha_composite(_circle_avatar(avatar_bytes, 66), (1058, 510))
+    draw = ImageDraw.Draw(image)
 
     voice_minutes = max(0, voice_seconds // 60)
     voice_text = f"{voice_minutes // 60}ч {voice_minutes % 60}м"
 
-    stat_font = _load_profile_font(48, bold=True)
-    _draw_centered_text(draw, (650, 130, 930, 194), str(rank), _fit_profile_text(draw, str(rank), 260, 48, bold=True, minimum_size=30), white)
-    _draw_centered_text(draw, (1080, 130, 1370, 194), str(coins), _fit_profile_text(draw, str(coins), 270, 48, bold=True, minimum_size=28), white)
-    _draw_centered_text(draw, (640, 312, 940, 400), voice_text, _fit_profile_text(draw, voice_text, 280, 48, bold=True, minimum_size=28), white)
-    _draw_centered_text(draw, (1090, 312, 1370, 400), str(message_count), _fit_profile_text(draw, str(message_count), 260, 48, bold=True, minimum_size=28), white)
+    # Крупные значения — размеры как в присланном образце.
+    values = (
+        ((650, 132, 935, 198), str(rank), 52, 32),
+        ((1080, 132, 1380, 198), str(coins), 52, 30),
+        ((640, 310, 945, 405), voice_text, 50, 30),
+        ((1080, 310, 1380, 405), str(message_count), 52, 30),
+    )
+    for box, value, preferred, minimum in values:
+        font = _fit_profile_text(
+            draw,
+            value,
+            box[2] - box[0] - 20,
+            preferred,
+            bold=True,
+            minimum_size=minimum,
+        )
+        _draw_centered_text(draw, box, value, font, white)
 
-    name_font = _fit_profile_text(draw, username, 205, 28, bold=True, minimum_size=18)
-    draw.text((704, 514), username, font=name_font, fill=white)
-    draw.text((704, 551), f"Онлайн: {voice_minutes // 60}ч", font=_load_profile_font(21), fill=muted)
-    draw.text((1154, 514), username, font=name_font, fill=white)
+    # Нижние карточки.
+    left_name_font = _fit_profile_text(draw, username, 205, 29, bold=True, minimum_size=19)
+    draw.text((704, 510), username, font=left_name_font, fill=white)
+    draw.text(
+        (704, 550),
+        f"Онлайн: {voice_minutes // 60}ч",
+        font=_load_profile_font(21),
+        fill=muted,
+    )
+
+    right_name_font = _fit_profile_text(draw, username, 205, 29, bold=True, minimum_size=19)
+    draw.text((1154, 510), username, font=right_name_font, fill=white)
     role_font = _fit_profile_text(draw, role_name, 205, 21, minimum_size=16)
-    draw.text((1154, 551), role_name, font=role_font, fill=muted)
+    draw.text((1154, 550), role_name, font=role_font, fill=muted)
 
     result = io.BytesIO()
-    image.convert("RGB").save(result, format="JPEG", quality=92, optimize=False)
+    image.convert("RGB").save(
+        result,
+        format="JPEG",
+        quality=97,
+        subsampling=0,
+        optimize=True,
+    )
     result.seek(0)
     return result
 
@@ -1752,37 +1886,69 @@ def _build_love_profile_image(
     combined_voice_seconds: int,
     room_name: str,
 ) -> io.BytesIO:
-    """Рисует любовный профиль строго по присланному шаблону пары."""
+    """Рисует любовный профиль строго по оригинальному шаблону 1536x704."""
     image = _get_love_profile_template().copy()
     draw = ImageDraw.Draw(image)
-    white = (246, 246, 248, 255)
+    white = (247, 247, 249, 255)
 
-    # Закрываем демонстрационные значения в шаблоне.
-    _cover(draw, (980, 125, 1240, 185), (44, 44, 44, 255))
-    _cover(draw, (960, 300, 1260, 365), (44, 44, 44, 255))
-    _cover(draw, (850, 475, 1240, 545), (44, 44, 44, 255))
-    # Область онлайна находится на тёмном сердце.
-    _cover(draw, (455, 405, 680, 475), (42, 42, 42, 255))
+    # Удаляем только демонстрационные значения без прямоугольных заливок.
+    for box in (
+        (1015, 125, 1225, 188),    # баланс
+        (1000, 300, 1240, 370),    # дни вместе
+        (470, 405, 675, 480),      # онлайн
+        (850, 475, 1245, 550),     # название комнаты
+    ):
+        _soft_erase(image, box)
 
+    # Аватары точно в два круглых места шаблона.
     image.alpha_composite(_circle_avatar(first_avatar_bytes, 142), (373, 181))
     image.alpha_composite(_circle_avatar(second_avatar_bytes, 142), (623, 181))
+    draw = ImageDraw.Draw(image)
 
     voice_hours = max(0, combined_voice_seconds // 3600)
-    _draw_centered_text(draw, (455, 400, 680, 478), f"{voice_hours}ч", _fit_profile_text(draw, f"{voice_hours}ч", 210, 54, bold=True, minimum_size=30), white)
-    _draw_centered_text(draw, (980, 122, 1240, 188), str(combined_coins), _fit_profile_text(draw, str(combined_coins), 240, 46, bold=True, minimum_size=28), white)
-    days_text = f"{together_days} " + ("день" if together_days % 10 == 1 and together_days % 100 != 11 else "дня" if together_days % 10 in (2, 3, 4) and together_days % 100 not in (12, 13, 14) else "дней")
-    _draw_centered_text(draw, (950, 292, 1260, 370), days_text, _fit_profile_text(draw, days_text, 285, 43, bold=True, minimum_size=26), white)
-    _draw_centered_text(draw, (850, 470, 1240, 550), room_name, _fit_profile_text(draw, room_name, 360, 40, bold=True, minimum_size=22), white)
+    voice_text = f"{voice_hours}ч"
+    days_word = (
+        "день"
+        if together_days % 10 == 1 and together_days % 100 != 11
+        else "дня"
+        if together_days % 10 in (2, 3, 4)
+        and together_days % 100 not in (12, 13, 14)
+        else "дней"
+    )
+    days_text = f"{together_days} {days_word}"
+
+    love_values = (
+        ((975, 120, 1265, 195), str(combined_coins), 50, 30),
+        ((950, 290, 1270, 380), days_text, 45, 28),
+        ((445, 395, 700, 490), voice_text, 58, 34),
+        ((825, 462, 1275, 555), room_name, 42, 24),
+    )
+    for box, value, preferred, minimum in love_values:
+        font = _fit_profile_text(
+            draw,
+            value,
+            box[2] - box[0] - 20,
+            preferred,
+            bold=True,
+            minimum_size=minimum,
+        )
+        _draw_centered_text(draw, box, value, font, white)
 
     result = io.BytesIO()
-    image.convert("RGB").save(result, format="JPEG", quality=92, optimize=False)
+    image.convert("RGB").save(
+        result,
+        format="JPEG",
+        quality=97,
+        subsampling=0,
+        optimize=True,
+    )
     result.seek(0)
     return result
 
 
 async def _read_profile_avatar(member: discord.abc.User, size: int = 512) -> bytes | None:
     try:
-        return await asyncio.wait_for(member.display_avatar.with_size(size).read(), timeout=5)
+        return await asyncio.wait_for(member.display_avatar.with_size(size).read(), timeout=10)
     except (asyncio.TimeoutError, discord.HTTPException, OSError):
         return None
 
@@ -2045,15 +2211,6 @@ class ProfileMarriageView(discord.ui.View):
         self.member = member
         self.partner = partner
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.member.id:
-            await interaction.response.send_message(
-                "Открыть любовный профиль может только владелец этого профиля.",
-                ephemeral=True,
-            )
-            return False
-        return True
-
     @discord.ui.button(label="Любовный профиль", style=discord.ButtonStyle.secondary)
     async def love_profile(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.guild is None:
@@ -2074,7 +2231,7 @@ class ProfileMarriageView(discord.ui.View):
                 await interaction.response.send_message("Не удалось найти партнёра на сервере.", ephemeral=True)
                 return
 
-        await interaction.response.defer(thinking=True, ephemeral=True)
+        await interaction.response.defer(thinking=True)
         (member_coins, _), (partner_coins, _) = await asyncio.gather(
             get_balance(self.member.id),
             get_balance(partner.id),
@@ -2089,17 +2246,27 @@ class ProfileMarriageView(discord.ui.View):
         )
         together_days = max(1, (datetime.now(timezone.utc) - created_at).days + 1)
         combined_voice = member_stats[2] + partner_stats[2]
-        image = await asyncio.to_thread(
-            _build_love_profile_image,
-            avatars[0],
-            avatars[1],
-            member_coins + partner_coins,
-            together_days,
-            combined_voice,
-            "Любовный профиль",
-        )
+        try:
+            image = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _build_love_profile_image,
+                    avatars[0],
+                    avatars[1],
+                    member_coins + partner_coins,
+                    together_days,
+                    combined_voice,
+                    "Любовный профиль",
+                ),
+                timeout=20,
+            )
+        except asyncio.TimeoutError:
+            await interaction.followup.send(
+                "Не удалось создать любовный профиль за 20 секунд. Попробуйте ещё раз.",
+                ephemeral=True,
+            )
+            return
         file = discord.File(image, filename=f"love_profile_{self.member.id}_{partner.id}.jpg")
-        await interaction.followup.send(file=file, view=LoveProfileResultView(self.member, partner), ephemeral=True)
+        await interaction.followup.send(file=file, view=LoveProfileResultView(self.member, partner))
 
 
 @bot.tree.command(name="profile", description="Посмотреть профиль пользователя")
@@ -2138,10 +2305,10 @@ async def profile(interaction: discord.Interaction, user: discord.Member | None 
                 voice_seconds,
                 role_name,
             ),
-            timeout=10,
+            timeout=20,
         )
     except asyncio.TimeoutError:
-        await interaction.followup.send("Не удалось создать профиль за 10 секунд. Попробуйте ещё раз.", ephemeral=True)
+        await interaction.followup.send("Не удалось создать профиль за 20 секунд. Попробуйте ещё раз.", ephemeral=True)
         return
     except Exception as error:
         print(f"Ошибка генерации профиля пользователя {target.id}: {error!r}")
