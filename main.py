@@ -130,10 +130,7 @@ def limited_text(text: str | None, fallback: str = "Отсутствует") -> 
 
 @bot.event
 async def on_ready() -> None:
-    await bot.change_presence(
-        status=discord.Status.idle,
-        activity=discord.CustomActivity(name="🌙 Луна"),
-    )
+    await bot.change_presence(status=discord.Status.idle)
     print(f"Бот запущен: {bot.user}")
     print(f"Все логи отправляются в канал ID: {LOG_CHANNEL_ID}")
 
@@ -200,11 +197,25 @@ async def on_message_delete(message: discord.Message) -> None:
         embed.add_field(name="Пользователь", value=member_id_text(message.author), inline=False)
 
     embed.add_field(name="Канал", value=message.channel.mention, inline=False)
-    embed.add_field(name="Сообщение", value=f"> {limited_text(message.content)}", inline=False)
+
+    # Показываем поле «Сообщение» только если в удалённом сообщении был текст.
+    if message.content and message.content.strip():
+        embed.add_field(
+            name="Сообщение",
+            value=f"> {limited_text(message.content)}",
+            inline=False,
+        )
 
     if message.attachments:
-        attachments = "\n".join(f"> [{item.filename}]({item.url})" for item in message.attachments)
-        embed.add_field(name="Вложения", value=attachments[:1024], inline=False)
+        attachments = "\n".join(
+            f"> [{item.filename}]({item.url})" for item in message.attachments
+        )
+        attachment_field_name = "Вложение" if len(message.attachments) == 1 else "Вложения"
+        embed.add_field(
+            name=attachment_field_name,
+            value=attachments[:1024],
+            inline=False,
+        )
 
     await send_log(message.guild, embed)
 
