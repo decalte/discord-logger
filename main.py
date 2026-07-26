@@ -132,6 +132,7 @@ def limited_text(text: str | None, fallback: str = "Отсутствует") -> 
 async def on_ready() -> None:
     await bot.change_presence(
         status=discord.Status.idle,
+        activity=discord.CustomActivity(name="🌙 Луна"),
     )
     print(f"Бот запущен: {bot.user}")
     print(f"Все логи отправляются в канал ID: {LOG_CHANNEL_ID}")
