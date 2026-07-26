@@ -13,7 +13,7 @@ TOKEN = os.getenv("TOKEN")
 # Один канал для всех логов.
 # Можно указать ID через переменную окружения LOG_CHANNEL_ID
 # или заменить число ниже на ID нужного канала.
-LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "1527284881351118960"))
+LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "1531038064229748888"))
 
 COLOR = discord.Color(0x303136)
 MOSCOW_TZ = timezone(timedelta(hours=3))
