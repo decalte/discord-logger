@@ -93,16 +93,12 @@ async def get_log_channel(guild: discord.Guild) -> discord.abc.Messageable | Non
     return channel
 
 
-async def send_log(
-    guild: discord.Guild,
-    embed: discord.Embed,
-    files: list[discord.File] | None = None,
-) -> None:
+async def send_log(guild: discord.Guild, embed: discord.Embed) -> None:
     channel = await get_log_channel(guild)
     if channel is None:
         return
     try:
-        await channel.send(embed=embed, files=files or [])
+        await channel.send(embed=embed)
     except (discord.Forbidden, discord.HTTPException) as error:
         print(f"Ошибка отправки лога: {error}")
 
@@ -155,125 +151,32 @@ async def on_message_edit(before: discord.Message, after: discord.Message) -> No
     )
     embed.add_field(name="Пользователь", value=member_id_text(before.author), inline=False)
     embed.add_field(name="Канал", value=before.channel.mention, inline=False)
-    embed.add_field(name="Было", value=f">>> {limited_text(before.content, 'Текст отсутствует')}", inline=False)
-    embed.add_field(name="Стало", value=f">>> {limited_text(after.content, 'Текст отсутствует')}", inline=False)
+    embed.add_field(name="Было", value=f"> {limited_text(before.content, 'Текст отсутствует')}", inline=False)
+    embed.add_field(name="Стало", value=f"> {limited_text(after.content, 'Текст отсутствует')}", inline=False)
     embed.add_field(name="Ссылка", value=f"> [Перейти к сообщению]({after.jump_url})", inline=False)
     await send_log(before.guild, embed)
 
 
 async def find_message_deleter(message: discord.Message) -> discord.abc.User | None:
-    """Определяет модератора для одиночного удаления сообщения."""
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(1)
     if not message.guild:
         return None
-
     try:
         async for entry in message.guild.audit_logs(
-            limit=20,
+            limit=8,
             action=discord.AuditLogAction.message_delete,
         ):
             if not entry.target or entry.target.id != message.author.id:
                 continue
-
             audit_channel = getattr(entry.extra, "channel", None)
             if audit_channel and audit_channel.id != message.channel.id:
                 continue
-
-            age = (datetime.now(timezone.utc) - entry.created_at).total_seconds()
-            if age <= 15:
-                return entry.user
-    except (discord.Forbidden, discord.HTTPException):
-        return None
-
-    return None
-
-
-async def find_bulk_message_deleter(
-    guild: discord.Guild,
-    channel_id: int,
-) -> discord.abc.User | None:
-    """Определяет модератора, который массово удалил сообщения."""
-    await asyncio.sleep(1.5)
-
-    try:
-        async for entry in guild.audit_logs(
-            limit=20,
-            action=discord.AuditLogAction.message_bulk_delete,
-        ):
-            target_id = getattr(entry.target, "id", None)
-            extra_channel = getattr(entry.extra, "channel", None)
-            extra_channel_id = getattr(extra_channel, "id", None)
-
-            if channel_id not in (target_id, extra_channel_id):
+            if (datetime.now(timezone.utc) - entry.created_at).total_seconds() > 10:
                 continue
-
-            age = (datetime.now(timezone.utc) - entry.created_at).total_seconds()
-            if age <= 15:
-                return entry.user
+            return None if entry.user.id == message.author.id else entry.user
     except (discord.Forbidden, discord.HTTPException):
         return None
-
     return None
-
-
-async def save_message_attachments(message: discord.Message) -> list[discord.File]:
-    saved_files: list[discord.File] = []
-    for attachment in message.attachments:
-        try:
-            saved_files.append(await attachment.to_file(use_cached=True))
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as error:
-            print(f"Не удалось сохранить вложение {attachment.filename}: {error}")
-    return saved_files
-
-
-async def send_deleted_message_log(
-    message: discord.Message,
-    deleter: discord.abc.User | None,
-    saved_files: list[discord.File],
-) -> None:
-    if not message.guild:
-        return
-
-    embed = discord.Embed(
-        title="Удалённое сообщение",
-        color=COLOR,
-        timestamp=moscow_time(),
-    )
-
-    embed.add_field(
-        name="Удалил(а)",
-        value=member_id_text(deleter) if deleter else "Не удалось определить",
-        inline=False,
-    )
-    embed.add_field(
-        name="Пользователю",
-        value=member_id_text(message.author),
-        inline=False,
-    )
-    embed.add_field(name="Канал", value=message.channel.mention, inline=False)
-
-    if message.content and message.content.strip():
-        embed.add_field(
-            name="Сообщение",
-            value=f">>> {limited_text(message.content)}",
-            inline=False,
-        )
-
-    if message.attachments:
-        attachment_field_name = "Вложение" if len(message.attachments) == 1 else "Вложения"
-        saved_names = {file.filename for file in saved_files}
-        attachment_lines = []
-        for item in message.attachments:
-            status = "сохранено ниже" if item.filename in saved_names else "не удалось сохранить"
-            attachment_lines.append(f"> `{item.filename}` — {status}")
-
-        embed.add_field(
-            name=attachment_field_name,
-            value="\n".join(attachment_lines)[:1024],
-            inline=False,
-        )
-
-    await send_log(message.guild, embed, files=saved_files)
 
 
 @bot.event
@@ -281,35 +184,40 @@ async def on_message_delete(message: discord.Message) -> None:
     if message.author.bot or not message.guild:
         return
 
-    saved_files = await save_message_attachments(message)
     deleter = await find_message_deleter(message)
-    await send_deleted_message_log(message, deleter, saved_files)
+    embed = discord.Embed(
+        title="Удалённое сообщение",
+        color=COLOR,
+        timestamp=moscow_time(),
+    )
+    if deleter:
+        embed.add_field(name="Удалил(а)", value=member_id_text(deleter), inline=False)
+        embed.add_field(name="Пользователю", value=member_id_text(message.author), inline=False)
+    else:
+        embed.add_field(name="Пользователь", value=member_id_text(message.author), inline=False)
 
+    embed.add_field(name="Канал", value=message.channel.mention, inline=False)
 
-@bot.event
-async def on_bulk_message_delete(messages: list[discord.Message]) -> None:
-    valid_messages = [
-        message
-        for message in messages
-        if message.guild and not message.author.bot
-    ]
-    if not valid_messages:
-        return
-
-    # Вложения сохраняются до ожидания журнала аудита, пока они ещё доступны.
-    saved_by_message: dict[int, list[discord.File]] = {}
-    for message in valid_messages:
-        saved_by_message[message.id] = await save_message_attachments(message)
-
-    first = valid_messages[0]
-    deleter = await find_bulk_message_deleter(first.guild, first.channel.id)
-
-    for message in valid_messages:
-        await send_deleted_message_log(
-            message,
-            deleter,
-            saved_by_message.get(message.id, []),
+    # Показываем поле «Сообщение» только если в удалённом сообщении был текст.
+    if message.content and message.content.strip():
+        embed.add_field(
+            name="Сообщение",
+            value=f"> {limited_text(message.content)}",
+            inline=False,
         )
+
+    if message.attachments:
+        attachments = "\n".join(
+            f"> [{item.filename}]({item.url})" for item in message.attachments
+        )
+        attachment_field_name = "Вложение" if len(message.attachments) == 1 else "Вложения"
+        embed.add_field(
+            name=attachment_field_name,
+            value=attachments[:1024],
+            inline=False,
+        )
+
+    await send_log(message.guild, embed)
 
 
 # -----------------------------------------------------------------------------
