@@ -483,7 +483,7 @@ async def on_ready() -> None:
 @app_commands.describe(
     пользователь="Пользователь, которого нужно забанить",
     причина="Причина бана",
-    время="Срок тайм-аута: минуты - m, часы - h, дни - d",
+    время="Формат: m (минуты), h (часы), d (дни)",
 )
 @app_commands.guild_only()
 async def ban_command(
@@ -514,7 +514,7 @@ async def ban_command(
             await send_private_error(
                 interaction,
                 "Забанить пользователя",
-                "Неверный формат времени. Используйте `30m`, `12h`, `7d` или `2w`.",
+                "Неверный формат времени. Используйте `30m`, `12h`, `7d`",
             )
             return
         unban_at = datetime.now(timezone.utc) + duration
@@ -549,7 +549,7 @@ async def ban_command(
     embed = discord.Embed(
         title="Выдача бана",
         description=(
-            f"{moderator.mention}, Вы, успешно **забанили** {пользователь.mention}!"
+            f"{moderator.mention}, Вы успешно **забанили** {пользователь.mention}!"
         ),
         color=COLOR,
     )
@@ -624,7 +624,7 @@ async def unban_command(
     embed = discord.Embed(
         title="Снятие бана",
         description=(
-            f"{moderator.mention}, Вы, успешно **разбанили** {user.mention}!"
+            f"{moderator.mention}, Вы успешно **разбанили** {user.mention}!"
         ),
         color=COLOR,
     )
@@ -677,7 +677,7 @@ async def kick_command(
     embed = discord.Embed(
         title="Исключение пользователя",
         description=(
-            f"{moderator.mention}, Вы, успешно **выгнали** {пользователь.mention}!"
+            f"{moderator.mention}, Вы успешно **выгнали** {пользователь.mention}!"
         ),
         color=COLOR,
     )
@@ -688,7 +688,7 @@ async def kick_command(
 @bot.tree.command(name="timeout", description="Выдать пользователю тайм-аут")
 @app_commands.describe(
     пользователь="Пользователь, которому нужно выдать тайм-аут",
-    время="Срок тайм-аута: минуты - m, часы - h, дни - d",
+    время="Формат: m (минуты), h (часы), d (дни)",
     причина="Причина тайм-аута",
 )
 @app_commands.guild_only()
@@ -752,7 +752,7 @@ async def timeout_command(
     embed = discord.Embed(
         title="Выдача тайм-аута",
         description=(
-            f"{moderator.mention}, Вы, успешно **выдали** тайм-аут {пользователь.mention}!"
+            f"{moderator.mention}, Вы успешно **выдали** тайм-аут {пользователь.mention}!"
         ),
         color=COLOR,
     )
@@ -811,7 +811,7 @@ async def untimeout_command(
     embed = discord.Embed(
         title="Снятие тайм-аута",
         description=(
-            f"{moderator.mention}, Вы, успешно **сняли** тайм-аут с {пользователь.mention}!"
+            f"{moderator.mention}, Вы успешно **сняли** тайм-аут с {пользователь.mention}!"
         ),
         color=COLOR,
     )
