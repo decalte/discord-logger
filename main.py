@@ -34,12 +34,19 @@ TIMEOUT_ONLY_ROLE_IDS = {
 
 TIMEOUT_MODERATION_ROLE_IDS = FULL_MODERATION_ROLE_IDS | TIMEOUT_ONLY_ROLE_IDS
 
+# Роли с доступом к /clear. Владелец сервера также имеет доступ.
+CLEAR_ROLE_IDS = {
+    1527110780892483754,
+    1526363607531520191,
+}
+
 NO_ACCESS_TITLES = {
     "ban": "Забанить пользователя",
     "unban": "Разбанить пользователя",
     "kick": "Исключить пользователя",
     "timeout": "Выдача тайм-аута",
     "untimeout": "Снятие тайм-аута",
+    "clear": "Удаление сообщений",
 }
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -66,6 +73,13 @@ pending_untimeouts: dict[tuple[int, int], dict[str, Any]] = {}
 
 # Активные задачи автоматического разбана.
 temporary_ban_tasks: dict[tuple[int, int], asyncio.Task[None]] = {}
+
+# Задачи, которые гарантированно отправляют лог после окончания тайм-аута.
+timeout_expiry_tasks: dict[tuple[int, int], asyncio.Task[None]] = {}
+
+# Каналы, в которых /clear сейчас удаляет сообщения. Нужен, чтобы не создавать
+# отдельный лог на каждое удалённое сообщение.
+clear_in_progress_channels: set[int] = set()
 
 
 # -----------------------------------------------------------------------------
@@ -123,6 +137,22 @@ def parse_duration(value: str) -> timedelta | None:
 
 def has_allowed_role(member: discord.Member, role_ids: set[int]) -> bool:
     return any(role.id in role_ids for role in member.roles)
+
+
+def russian_message_count(value: int) -> str:
+    last_two = value % 100
+    last_one = value % 10
+
+    if 11 <= last_two <= 14:
+        word = "сообщений"
+    elif last_one == 1:
+        word = "сообщение"
+    elif 2 <= last_one <= 4:
+        word = "сообщения"
+    else:
+        word = "сообщений"
+
+    return f"{value} {word}"
 
 
 def load_json(path: Path, fallback: Any) -> Any:
@@ -334,6 +364,89 @@ async def restore_temporary_bans() -> None:
 
 
 # -----------------------------------------------------------------------------
+# Контроль окончания тайм-аутов
+# -----------------------------------------------------------------------------
+
+async def timeout_expiry_worker(
+    guild_id: int,
+    user_id: int,
+    expires_at: datetime,
+) -> None:
+    key = (guild_id, user_id)
+    try:
+        delay = max(0.0, (expires_at - datetime.now(timezone.utc)).total_seconds())
+        await asyncio.sleep(delay + 2)
+
+        guild = bot.get_guild(guild_id)
+        if guild is None:
+            return
+
+        try:
+            member = await guild.fetch_member(user_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return
+
+        current_until = member.timed_out_until
+        now = datetime.now(timezone.utc)
+
+        # Тайм-аут продлили — переносим проверку на новый срок.
+        if current_until is not None and current_until > now:
+            schedule_timeout_expiry(guild_id, user_id, current_until)
+            return
+
+        embed = discord.Embed(
+            title="Снятие тайм-аута",
+            color=COLOR,
+            timestamp=discord.utils.utcnow(),
+        )
+        embed.add_field(
+            name="Пользователь",
+            value=member_id_text(member),
+            inline=False,
+        )
+        embed.add_field(
+            name="Причина",
+            value="> Время действия тайм-аута закончилось.",
+            inline=False,
+        )
+        await send_log(guild, embed)
+    finally:
+        if timeout_expiry_tasks.get(key) is asyncio.current_task():
+            timeout_expiry_tasks.pop(key, None)
+
+
+def schedule_timeout_expiry(
+    guild_id: int,
+    user_id: int,
+    expires_at: datetime,
+) -> None:
+    key = (guild_id, user_id)
+    old_task = timeout_expiry_tasks.get(key)
+    if old_task and not old_task.done() and old_task is not asyncio.current_task():
+        old_task.cancel()
+
+    timeout_expiry_tasks[key] = asyncio.create_task(
+        timeout_expiry_worker(guild_id, user_id, expires_at)
+    )
+
+
+def cancel_timeout_expiry(guild_id: int, user_id: int) -> None:
+    key = (guild_id, user_id)
+    task = timeout_expiry_tasks.pop(key, None)
+    if task and not task.done() and task is not asyncio.current_task():
+        task.cancel()
+
+
+async def restore_timeout_expiry_tasks() -> None:
+    now = datetime.now(timezone.utc)
+    for guild in bot.guilds:
+        for member in guild.members:
+            until = member.timed_out_until
+            if until is not None and until > now:
+                schedule_timeout_expiry(guild.id, member.id, until)
+
+
+# -----------------------------------------------------------------------------
 # Запуск
 # -----------------------------------------------------------------------------
 
@@ -352,6 +465,8 @@ async def on_ready() -> None:
         await restore_temporary_bans()
         _restored_temp_bans = True
 
+    await restore_timeout_expiry_tasks()
+
     await bot.change_presence(status=discord.Status.idle)
     print(f"Бот запущен: {bot.user}")
     print(f"Все логи отправляются в канал ID: {LOG_CHANNEL_ID}")
@@ -360,6 +475,128 @@ async def on_ready() -> None:
 # -----------------------------------------------------------------------------
 # Slash-команды модерации
 # -----------------------------------------------------------------------------
+
+@bot.tree.command(name="clear", description="Удалить сообщения")
+@app_commands.describe(
+    количество="Количество сообщений, которое нужно удалить",
+    пользователь="Удалить сообщения только выбранного пользователя",
+)
+@app_commands.guild_only()
+async def clear_command(
+    interaction: discord.Interaction,
+    количество: app_commands.Range[int, 1, 500],
+    пользователь: discord.Member | None = None,
+) -> None:
+    guild = interaction.guild
+    moderator = interaction.user
+    channel = interaction.channel
+
+    if guild is None or not isinstance(moderator, discord.Member):
+        return
+
+    has_access = (
+        moderator.id == guild.owner_id
+        or has_allowed_role(moderator, CLEAR_ROLE_IDS)
+    )
+    if not has_access:
+        await send_no_access(interaction, "clear")
+        return
+
+    if channel is None or not hasattr(channel, "purge"):
+        await send_private_error(
+            interaction,
+            "Удаление сообщений",
+            "В этом канале невозможно удалить сообщения.",
+        )
+        return
+
+    bot_member = guild.me
+    permissions = channel.permissions_for(bot_member) if bot_member else None
+    if permissions is None or not permissions.manage_messages:
+        await send_private_error(
+            interaction,
+            "Удаление сообщений",
+            "У бота нет права `Управлять сообщениями` в этом канале.",
+        )
+        return
+
+    await interaction.response.defer()
+
+    def message_check(message: discord.Message) -> bool:
+        return пользователь is None or message.author.id == пользователь.id
+
+    clear_in_progress_channels.add(channel.id)
+    try:
+        deleted = await channel.purge(
+            limit=int(количество),
+            check=message_check,
+            reason=f"/clear | Модератор: {moderator} ({moderator.id})",
+        )
+    except discord.Forbidden:
+        await interaction.followup.send(
+            embed=discord.Embed(
+                title="Удаление сообщений",
+                description="У бота недостаточно прав для удаления сообщений.",
+                color=COLOR,
+            ),
+            ephemeral=True,
+        )
+        return
+    except discord.HTTPException:
+        await interaction.followup.send(
+            embed=discord.Embed(
+                title="Удаление сообщений",
+                description="Discord не смог удалить сообщения.",
+                color=COLOR,
+            ),
+            ephemeral=True,
+        )
+        return
+    finally:
+        # События удаления могут прийти с небольшой задержкой.
+        await asyncio.sleep(1)
+        clear_in_progress_channels.discard(channel.id)
+
+    deleted_count = len(deleted)
+    count_text = russian_message_count(deleted_count)
+
+    embed = discord.Embed(
+        title="Удаление сообщений",
+        description=(
+            f"{moderator.mention}, Вы успешно **удалили** {count_text}!"
+        ),
+        color=COLOR,
+    )
+    await interaction.followup.send(embed=embed)
+
+    log_embed = discord.Embed(
+        title="Удаление сообщений",
+        color=COLOR,
+        timestamp=moscow_time(),
+    )
+    log_embed.add_field(
+        name="Удалил(а)",
+        value=member_id_text(moderator),
+        inline=False,
+    )
+    log_embed.add_field(
+        name="Количество",
+        value=f"> {count_text}",
+        inline=False,
+    )
+    if пользователь is not None:
+        log_embed.add_field(
+            name="Пользователь",
+            value=member_id_text(пользователь),
+            inline=False,
+        )
+    log_embed.add_field(
+        name="Канал",
+        value=channel_id_text(channel),
+        inline=False,
+    )
+    await send_log(guild, log_embed)
+
 
 @bot.tree.command(name="ban", description="Забанить пользователя")
 @app_commands.describe(
@@ -754,6 +991,8 @@ async def find_message_deleter(message: discord.Message) -> discord.abc.User | N
 async def on_message_delete(message: discord.Message) -> None:
     if message.author.bot or not message.guild:
         return
+    if message.channel.id in clear_in_progress_channels:
+        return
 
     deleter = await find_message_deleter(message)
     embed = discord.Embed(
@@ -919,6 +1158,12 @@ async def on_member_update(before: discord.Member, after: discord.Member) -> Non
     await asyncio.sleep(1)
 
     is_removal = after.timed_out_until is None
+
+    # При выдаче или продлении тайм-аута создаём отдельную задачу.
+    # Она отправит лог даже если Discord не пришлёт on_member_update в момент окончания.
+    if not is_removal:
+        schedule_timeout_expiry(after.guild.id, after.id, after.timed_out_until)
+
     pending = (
         pending_untimeouts.pop(key, None)
         if is_removal
@@ -931,24 +1176,9 @@ async def on_member_update(before: discord.Member, after: discord.Member) -> Non
         after.id,
     )
 
-    # Тайм-аут закончился сам по времени: модератора и ручной причины нет.
+    # Естественное окончание срока логирует timeout_expiry_worker.
+    # Здесь ничего не отправляем, чтобы не было двух одинаковых логов.
     if is_removal and pending is None and audit is None:
-        embed = discord.Embed(
-            title="Снятие тайм-аута",
-            color=COLOR,
-            timestamp=moscow_time(),
-        )
-        embed.add_field(
-            name="Пользователю",
-            value=member_id_text(after),
-            inline=False,
-        )
-        embed.add_field(
-            name="Причина",
-            value="> Время действия тайм-аута закончилось.",
-            inline=False,
-        )
-        await send_log(after.guild, embed)
         return
 
     moderator = pending.get("moderator") if pending else (audit.user if audit else None)
@@ -957,23 +1187,28 @@ async def on_member_update(before: discord.Member, after: discord.Member) -> Non
     )
 
     if is_removal:
+        cancel_timeout_expiry(after.guild.id, after.id)
         embed = discord.Embed(
             title="Снятие тайм-аута",
             color=COLOR,
-            timestamp=moscow_time(),
+            timestamp=discord.utils.utcnow(),
         )
         embed.add_field(
             name="Снял(а)",
             value=member_id_text(moderator) if moderator else "Не удалось определить",
             inline=False,
         )
-        embed.add_field(name="Пользователю", value=member_id_text(after), inline=False)
+        embed.add_field(name="Пользователь", value=member_id_text(after), inline=False)
         if reason:
             embed.add_field(name="Причина", value=f"> {reason}", inline=False)
     else:
         until = pending.get("until") if pending else after.timed_out_until
         reason = reason or "Не указана"
-        embed = discord.Embed(title="Выдача тайм-аута", color=COLOR)
+        embed = discord.Embed(
+            title="Выдача тайм-аута",
+            color=COLOR,
+            timestamp=discord.utils.utcnow(),
+        )
         embed.add_field(
             name="Выдал(а)",
             value=member_id_text(moderator) if moderator else "Не удалось определить",
