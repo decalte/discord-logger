@@ -483,7 +483,7 @@ async def on_ready() -> None:
 @app_commands.describe(
     пользователь="Пользователь, которого нужно забанить",
     причина="Причина бана",
-    время="Срок бана: 30m, 12h, 7d или 2w",
+    время="Срок тайм-аута: минуты - m, часы - h, дни - d",
 )
 @app_commands.guild_only()
 async def ban_command(
@@ -688,7 +688,7 @@ async def kick_command(
 @bot.tree.command(name="timeout", description="Выдать пользователю тайм-аут")
 @app_commands.describe(
     пользователь="Пользователь, которому нужно выдать тайм-аут",
-    время="Срок тайм-аута: 30m, 12h, 7d или 2w",
+    время="Срок тайм-аута: минуты - m, часы - h, дни - d",
     причина="Причина тайм-аута",
 )
 @app_commands.guild_only()
