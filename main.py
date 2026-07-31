@@ -967,7 +967,7 @@ async def on_member_ban(guild: discord.Guild, user: discord.User) -> None:
 
     moderator = pending.get("moderator") if pending else (audit.user if audit else None)
     reason = pending.get("reason") if pending else (
-        audit.reason if audit and audit.reason else "Причина не указана"
+        audit.reason if audit and audit.reason else "Не указана"
     )
     unban_at = pending.get("unban_at") if pending else None
 
@@ -1000,7 +1000,7 @@ async def on_member_unban(guild: discord.Guild, user: discord.User) -> None:
 
     moderator = pending.get("moderator") if pending else (audit.user if audit else None)
     reason = pending.get("reason") if pending else (
-        audit.reason if audit and audit.reason else "Причина не указана"
+        audit.reason if audit and audit.reason else "Не указана"
     )
 
     remove_temporary_ban(guild.id, user.id)
@@ -1050,7 +1050,7 @@ async def on_member_update(before: discord.Member, after: discord.Member) -> Non
 
     moderator = pending.get("moderator") if pending else (audit.user if audit else None)
     reason = pending.get("reason") if pending else (
-        audit.reason if audit and audit.reason else "Причина не указана"
+        audit.reason if audit and audit.reason else "Не указана"
     )
 
     if is_removal:
