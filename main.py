@@ -10,7 +10,7 @@ from typing import Any
 
 import discord
 from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import commands
 
 
 TOKEN = os.getenv("TOKEN")
@@ -44,7 +44,6 @@ NO_ACCESS_TITLES = {
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMP_BANS_FILE = BASE_DIR / "temporary_bans.json"
-DYNAMIC_LOGS_FILE = BASE_DIR / "dynamic_activity_logs.json"
 
 intents = discord.Intents.default()
 intents.guilds = True
@@ -81,43 +80,13 @@ def moscow_time(value: datetime | None = None) -> datetime:
     return value.astimezone(MOSCOW_TZ)
 
 
-def log_datetime(value: datetime | None = None) -> str:
-    """Формат для логов входа/выхода: Сегодня, Вчера или точная дата."""
+def discord_datetime(value: datetime | None = None) -> str:
+    """Discord сам показывает дату и время в часовом поясе каждого пользователя."""
     if value is None:
         value = datetime.now(timezone.utc)
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
-
-    local = moscow_time(value)
-    today = moscow_time().date()
-    time_text = local.strftime("%H:%M")
-
-    if local.date() == today:
-        return f"Сегодня, в {time_text}"
-    if local.date() == today - timedelta(days=1):
-        return f"Вчера, в {time_text}"
-
-    months = (
-        "января", "февраля", "марта", "апреля", "мая", "июня",
-        "июля", "августа", "сентября", "октября", "ноября", "декабря",
-    )
-    return f"{local.day} {months[local.month - 1]} {local.year}, в {time_text}"
-
-
-def russian_datetime(value: datetime) -> str:
-    months = (
-        "января", "февраля", "марта", "апреля", "мая", "июня",
-        "июля", "августа", "сентября", "октября", "ноября", "декабря",
-    )
-    local = moscow_time(value)
-    today = moscow_time().date()
-
-    if local.date() == today:
-        return local.strftime("Сегодня, в %H:%M")
-    if local.date() == today + timedelta(days=1):
-        return local.strftime("Завтра, в %H:%M")
-
-    return f"{local.day} {months[local.month - 1]} {local.year}, в {local:%H:%M}"
+    return f"<t:{int(value.timestamp())}:f>"
 
 
 def member_id_text(user: discord.abc.User) -> str:
@@ -269,90 +238,6 @@ def can_moderate_target(
 
 
 # -----------------------------------------------------------------------------
-# Динамическое обновление «Сегодня» / «Вчера» в логах входа и выхода
-# -----------------------------------------------------------------------------
-
-def register_dynamic_activity_log(
-    message: discord.Message,
-    event_time: datetime,
-    field_name: str,
-) -> None:
-    records = load_json(DYNAMIC_LOGS_FILE, [])
-    records.append(
-        {
-            "guild_id": message.guild.id if message.guild else 0,
-            "channel_id": message.channel.id,
-            "message_id": message.id,
-            "event_timestamp": event_time.timestamp(),
-            "field_name": field_name,
-        }
-    )
-    save_json(DYNAMIC_LOGS_FILE, records)
-
-
-@tasks.loop(minutes=5)
-async def refresh_dynamic_activity_logs() -> None:
-    records = load_json(DYNAMIC_LOGS_FILE, [])
-    if not records:
-        return
-
-    remaining: list[dict[str, Any]] = []
-    now = datetime.now(timezone.utc)
-
-    for record in records:
-        event_time = datetime.fromtimestamp(record["event_timestamp"], timezone.utc)
-        age = now - event_time
-
-        # После двух суток текст уже превращается в точную дату и больше не меняется.
-        keep_tracking = age < timedelta(days=3)
-
-        channel = bot.get_channel(int(record["channel_id"]))
-        if channel is None or not isinstance(channel, discord.abc.Messageable):
-            if keep_tracking:
-                remaining.append(record)
-            continue
-
-        try:
-            message = await channel.fetch_message(int(record["message_id"]))
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            continue
-
-        if not message.embeds:
-            continue
-
-        embed = message.embeds[0].copy()
-        changed = False
-        for index, field in enumerate(embed.fields):
-            if field.name == record["field_name"]:
-                new_value = f"> {log_datetime(event_time)}"
-                if field.value != new_value:
-                    embed.set_field_at(
-                        index,
-                        name=field.name,
-                        value=new_value,
-                        inline=field.inline,
-                    )
-                    changed = True
-                break
-
-        if changed:
-            try:
-                await message.edit(embed=embed)
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-
-        if keep_tracking:
-            remaining.append(record)
-
-    save_json(DYNAMIC_LOGS_FILE, remaining)
-
-
-@refresh_dynamic_activity_logs.before_loop
-async def before_refresh_dynamic_activity_logs() -> None:
-    await bot.wait_until_ready()
-
-
-# -----------------------------------------------------------------------------
 # Временные баны с восстановлением после перезапуска
 # -----------------------------------------------------------------------------
 
@@ -467,9 +352,6 @@ async def on_ready() -> None:
         await restore_temporary_bans()
         _restored_temp_bans = True
 
-    if not refresh_dynamic_activity_logs.is_running():
-        refresh_dynamic_activity_logs.start()
-
     await bot.change_presence(status=discord.Status.idle)
     print(f"Бот запущен: {bot.user}")
     print(f"Все логи отправляются в канал ID: {LOG_CHANNEL_ID}")
@@ -556,7 +438,7 @@ async def ban_command(
     embed.add_field(name="Причина", value=f"> {reason}", inline=False)
     embed.add_field(
         name="До",
-        value="> Навсегда" if unban_at is None else f"> {russian_datetime(unban_at)}",
+        value="> Навсегда" if unban_at is None else f"> {discord_datetime(unban_at)}",
         inline=False,
     )
     await interaction.response.send_message(embed=embed)
@@ -757,7 +639,7 @@ async def timeout_command(
         color=COLOR,
     )
     embed.add_field(name="Причина", value=f"> {reason}", inline=False)
-    embed.add_field(name="До", value=f"> {russian_datetime(until)}", inline=False)
+    embed.add_field(name="До", value=f"> {discord_datetime(until)}", inline=False)
     await interaction.response.send_message(embed=embed)
 
 
@@ -770,7 +652,7 @@ async def timeout_command(
 async def untimeout_command(
     interaction: discord.Interaction,
     пользователь: discord.Member,
-    причина: str = "Не указана",
+    причина: str | None = None,
 ) -> None:
     guild = interaction.guild
     moderator = interaction.user
@@ -790,14 +672,18 @@ async def untimeout_command(
         await send_private_error(interaction, "Снятие тайм-аута", "У пользователя нет активного тайм-аута.")
         return
 
-    reason = limited_text(причина, "Не указана")
+    reason = limited_text(причина) if причина and причина.strip() else None
     key = (guild.id, пользователь.id)
     pending_untimeouts[key] = {"moderator": moderator, "reason": reason}
+
+    audit_reason = f"Модератор: {moderator} ({moderator.id})"
+    if reason:
+        audit_reason = f"{reason} | {audit_reason}"
 
     try:
         await пользователь.timeout(
             None,
-            reason=f"{reason} | Модератор: {moderator} ({moderator.id})",
+            reason=audit_reason,
         )
     except discord.Forbidden:
         pending_untimeouts.pop(key, None)
@@ -815,7 +701,8 @@ async def untimeout_command(
         ),
         color=COLOR,
     )
-    embed.add_field(name="Причина", value=f"> {reason}", inline=False)
+    if reason:
+        embed.add_field(name="Причина", value=f"> {reason}", inline=False)
     await interaction.response.send_message(embed=embed)
 
 
@@ -912,10 +799,8 @@ async def on_member_join(member: discord.Member) -> None:
     event_time = datetime.now(timezone.utc)
     embed = discord.Embed(title="Вход на сервер", color=COLOR)
     embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
-    embed.add_field(name="Дата и время входа", value=f"> {log_datetime(event_time)}", inline=False)
-    message = await send_log(member.guild, embed)
-    if message:
-        register_dynamic_activity_log(message, event_time, "Дата и время входа")
+    embed.add_field(name="Дата и время входа", value=f"> {discord_datetime(event_time)}", inline=False)
+    await send_log(member.guild, embed)
 
 
 @bot.event
@@ -948,10 +833,8 @@ async def on_member_remove(member: discord.Member) -> None:
 
     embed = discord.Embed(title="Выход с сервера", color=COLOR)
     embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
-    embed.add_field(name="Дата и время выхода", value=f"> {log_datetime(event_time)}", inline=False)
-    message = await send_log(member.guild, embed)
-    if message:
-        register_dynamic_activity_log(message, event_time, "Дата и время выхода")
+    embed.add_field(name="Дата и время выхода", value=f"> {discord_datetime(event_time)}", inline=False)
+    await send_log(member.guild, embed)
 
 
 # -----------------------------------------------------------------------------
@@ -985,7 +868,7 @@ async def on_member_ban(guild: discord.Guild, user: discord.User) -> None:
     embed.add_field(name="Причина", value=f"> {reason}", inline=False)
     embed.add_field(
         name="До",
-        value="> Навсегда" if unban_at is None else f"> {russian_datetime(unban_at)}",
+        value="> Навсегда" if unban_at is None else f"> {discord_datetime(unban_at)}",
         inline=False,
     )
     await send_log(guild, embed)
@@ -1048,9 +931,29 @@ async def on_member_update(before: discord.Member, after: discord.Member) -> Non
         after.id,
     )
 
+    # Тайм-аут закончился сам по времени: модератора и ручной причины нет.
+    if is_removal and pending is None and audit is None:
+        embed = discord.Embed(
+            title="Снятие тайм-аута",
+            color=COLOR,
+            timestamp=moscow_time(),
+        )
+        embed.add_field(
+            name="Пользователю",
+            value=member_id_text(after),
+            inline=False,
+        )
+        embed.add_field(
+            name="Причина",
+            value="> Время действия тайм-аута закончилось.",
+            inline=False,
+        )
+        await send_log(after.guild, embed)
+        return
+
     moderator = pending.get("moderator") if pending else (audit.user if audit else None)
     reason = pending.get("reason") if pending else (
-        audit.reason if audit and audit.reason else "Не указана"
+        audit.reason if audit and audit.reason else None
     )
 
     if is_removal:
@@ -1065,9 +968,11 @@ async def on_member_update(before: discord.Member, after: discord.Member) -> Non
             inline=False,
         )
         embed.add_field(name="Пользователю", value=member_id_text(after), inline=False)
-        embed.add_field(name="Причина", value=f"> {reason}", inline=False)
+        if reason:
+            embed.add_field(name="Причина", value=f"> {reason}", inline=False)
     else:
         until = pending.get("until") if pending else after.timed_out_until
+        reason = reason or "Не указана"
         embed = discord.Embed(title="Выдача тайм-аута", color=COLOR)
         embed.add_field(
             name="Выдал(а)",
@@ -1078,7 +983,7 @@ async def on_member_update(before: discord.Member, after: discord.Member) -> Non
         embed.add_field(name="Причина", value=f"> {reason}", inline=False)
         embed.add_field(
             name="До",
-            value=f"> {russian_datetime(until)}",
+            value=f"> {discord_datetime(until)}",
             inline=False,
         )
 
