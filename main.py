@@ -489,7 +489,7 @@ async def on_ready() -> None:
 async def ban_command(
     interaction: discord.Interaction,
     пользователь: discord.Member,
-    причина: str = "Причина не указана",
+    причина: str = "Не указана",
     время: str | None = None,
 ) -> None:
     guild = interaction.guild
@@ -519,7 +519,7 @@ async def ban_command(
             return
         unban_at = datetime.now(timezone.utc) + duration
 
-    reason = limited_text(причина, "Причина не указана")
+    reason = limited_text(причина, "Не указана")
     key = (guild.id, пользователь.id)
     pending_bans[key] = {
         "moderator": moderator,
@@ -571,7 +571,7 @@ async def ban_command(
 async def unban_command(
     interaction: discord.Interaction,
     пользователь: str,
-    причина: str = "Причина не указана",
+    причина: str = "Не указана",
 ) -> None:
     guild = interaction.guild
     moderator = interaction.user
@@ -598,7 +598,7 @@ async def unban_command(
         await send_private_error(interaction, "Разбанить пользователя", "Не удалось получить данные пользователя.")
         return
 
-    reason = limited_text(причина, "Причина не указана")
+    reason = limited_text(причина, "Не указана")
     key = (guild.id, user.id)
     pending_unbans[key] = {"moderator": moderator, "reason": reason}
 
@@ -641,7 +641,7 @@ async def unban_command(
 async def kick_command(
     interaction: discord.Interaction,
     пользователь: discord.Member,
-    причина: str = "Причина не указана",
+    причина: str = "Не указана",
 ) -> None:
     guild = interaction.guild
     moderator = interaction.user
@@ -657,7 +657,7 @@ async def kick_command(
         await send_private_error(interaction, "Исключить пользователя", error or "Команда недоступна.")
         return
 
-    reason = limited_text(причина, "Причина не указана")
+    reason = limited_text(причина, "Не указана")
     key = (guild.id, пользователь.id)
     pending_kicks[key] = {"moderator": moderator, "reason": reason}
 
@@ -696,7 +696,7 @@ async def timeout_command(
     interaction: discord.Interaction,
     пользователь: discord.Member,
     время: str,
-    причина: str = "Причина не указана",
+    причина: str = "Не указана",
 ) -> None:
     guild = interaction.guild
     moderator = interaction.user
@@ -727,7 +727,7 @@ async def timeout_command(
         return
 
     until = datetime.now(timezone.utc) + duration
-    reason = limited_text(причина, "Причина не указана")
+    reason = limited_text(причина, "Не указана")
     key = (guild.id, пользователь.id)
     pending_timeouts[key] = {
         "moderator": moderator,
@@ -752,7 +752,7 @@ async def timeout_command(
     embed = discord.Embed(
         title="Выдача тайм-аута",
         description=(
-            f"{moderator.mention}, Вы, успешно **выдали тайм-аут** {пользователь.mention}!"
+            f"{moderator.mention}, Вы, успешно **выдали** тайм-аут {пользователь.mention}!"
         ),
         color=COLOR,
     )
@@ -770,7 +770,7 @@ async def timeout_command(
 async def untimeout_command(
     interaction: discord.Interaction,
     пользователь: discord.Member,
-    причина: str = "Причина не указана",
+    причина: str = "Не указана",
 ) -> None:
     guild = interaction.guild
     moderator = interaction.user
@@ -790,7 +790,7 @@ async def untimeout_command(
         await send_private_error(interaction, "Снятие тайм-аута", "У пользователя нет активного тайм-аута.")
         return
 
-    reason = limited_text(причина, "Причина не указана")
+    reason = limited_text(причина, "Не указана")
     key = (guild.id, пользователь.id)
     pending_untimeouts[key] = {"moderator": moderator, "reason": reason}
 
@@ -811,7 +811,7 @@ async def untimeout_command(
     embed = discord.Embed(
         title="Снятие тайм-аута",
         description=(
-            f"{moderator.mention}, Вы, успешно **сняли тайм-аут** с {пользователь.mention}!"
+            f"{moderator.mention}, Вы, успешно **сняли** тайм-аут с {пользователь.mention}!"
         ),
         color=COLOR,
     )
