@@ -520,7 +520,9 @@ async def clear_command(
         )
         return
 
-    await interaction.response.defer()
+    # Скрытый ответ нельзя удалить через purge, поэтому подтверждение
+    # гарантированно увидит только вызвавший команду модератор.
+    await interaction.response.defer(ephemeral=True)
 
     def message_check(message: discord.Message) -> bool:
         return пользователь is None or message.author.id == пользователь.id
@@ -535,7 +537,7 @@ async def clear_command(
     except discord.Forbidden:
         await interaction.followup.send(
             embed=discord.Embed(
-                title="Удаление сообщений",
+                title="Удалить сообщения",
                 description="У бота недостаточно прав для удаления сообщений.",
                 color=COLOR,
             ),
@@ -545,7 +547,7 @@ async def clear_command(
     except discord.HTTPException:
         await interaction.followup.send(
             embed=discord.Embed(
-                title="Удаление сообщений",
+                title="Удалить сообщения",
                 description="Discord не смог удалить сообщения.",
                 color=COLOR,
             ),
@@ -561,16 +563,16 @@ async def clear_command(
     count_text = russian_message_count(deleted_count)
 
     embed = discord.Embed(
-        title="Удаление сообщений",
+        title="Удалить сообщения",
         description=(
             f"{moderator.mention}, Вы успешно **удалили** {count_text}!"
         ),
         color=COLOR,
     )
-    await interaction.followup.send(embed=embed)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
     log_embed = discord.Embed(
-        title="Удаление сообщений",
+        title="Удалить сообщения",
         color=COLOR,
         timestamp=moscow_time(),
     )
