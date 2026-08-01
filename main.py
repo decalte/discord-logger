@@ -406,7 +406,7 @@ async def timeout_expiry_worker(
         )
         embed.add_field(
             name="Причина",
-            value="> Время действия тайм-аута закончилось.",
+            value="> Время действия тайм-аута закончилось",
             inline=False,
         )
         await send_log(guild, embed)
