@@ -967,7 +967,7 @@ async def on_message_edit(before: discord.Message, after: discord.Message) -> No
         color=COLOR,
         timestamp=moscow_time(),
     )
-    embed.add_field(name="Пользователю", value=member_id_text(before.author), inline=False)
+    embed.add_field(name="Пользователь", value=member_id_text(before.author), inline=False)
     embed.add_field(name="Канал", value=channel_id_text(before.channel), inline=False)
     embed.add_field(name="Было", value=f"> {limited_text(before.content, 'Текст отсутствует')}", inline=False)
     embed.add_field(name="Стало", value=f"> {limited_text(after.content, 'Текст отсутствует')}", inline=False)
@@ -1014,7 +1014,7 @@ async def on_message_delete(message: discord.Message) -> None:
         embed.add_field(name="Удалил(а)", value=member_id_text(deleter), inline=False)
         embed.add_field(name="Пользователю", value=member_id_text(message.author), inline=False)
     else:
-        embed.add_field(name="Пользователю", value=member_id_text(message.author), inline=False)
+        embed.add_field(name="Пользователь", value=member_id_text(message.author), inline=False)
 
     embed.add_field(name="Канал", value=channel_id_text(message.channel), inline=False)
 
