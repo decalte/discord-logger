@@ -46,7 +46,7 @@ NO_ACCESS_TITLES = {
     "kick": "Исключить пользователя",
     "timeout": "Выдача тайм-аута",
     "untimeout": "Снятие тайм-аута",
-    "clear": "Удаление сообщений",
+    "clear": "Удалить сообщения",
 }
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -505,7 +505,7 @@ async def clear_command(
     if channel is None or not hasattr(channel, "purge"):
         await send_private_error(
             interaction,
-            "Удаление сообщений",
+            "Удалить сообщения",
             "В этом канале невозможно удалить сообщения.",
         )
         return
@@ -515,7 +515,7 @@ async def clear_command(
     if permissions is None or not permissions.manage_messages:
         await send_private_error(
             interaction,
-            "Удаление сообщений",
+            "Удалить сообщения",
             "У бота нет права `Управлять сообщениями` в этом канале.",
         )
         return
@@ -562,11 +562,19 @@ async def clear_command(
     deleted_count = len(deleted)
     count_text = russian_message_count(deleted_count)
 
+    if пользователь is not None:
+        description = (
+            f"{moderator.mention}, Вы успешно **удалили** {count_text} "
+            f"пользователю {пользователь.mention}!"
+        )
+    else:
+        description = (
+            f"{moderator.mention}, Вы успешно **удалили** {count_text}!"
+        )
+
     embed = discord.Embed(
         title="Удалить сообщения",
-        description=(
-            f"{moderator.mention}, Вы успешно **удалили** {count_text} пользователю {member.mention}!"
-        ),
+        description=description,
         color=COLOR,
     )
     await interaction.followup.send(embed=embed, ephemeral=True)
@@ -581,11 +589,6 @@ async def clear_command(
         value=member_id_text(moderator),
         inline=False,
     )
-    log_embed.add_field(
-        name="Количество",
-        value=f"> {count_text}",
-        inline=False,
-    )
     if пользователь is not None:
         log_embed.add_field(
             name="Пользователю",
@@ -595,6 +598,11 @@ async def clear_command(
     log_embed.add_field(
         name="Канал",
         value=channel_id_text(channel),
+        inline=False,
+    )
+    log_embed.add_field(
+        name="Количество",
+        value=f"> {count_text}",
         inline=False,
     )
     await send_log(guild, log_embed)
