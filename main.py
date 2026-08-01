@@ -400,7 +400,7 @@ async def timeout_expiry_worker(
             timestamp=discord.utils.utcnow(),
         )
         embed.add_field(
-            name="Пользователь",
+            name="Пользователю",
             value=member_id_text(member),
             inline=False,
         )
@@ -565,7 +565,7 @@ async def clear_command(
     embed = discord.Embed(
         title="Удалить сообщения",
         description=(
-            f"{moderator.mention}, Вы успешно **удалили** {count_text}!"
+            f"{moderator.mention}, Вы успешно **удалили** {count_text} пользователю {member.mention}!"
         ),
         color=COLOR,
     )
@@ -588,7 +588,7 @@ async def clear_command(
     )
     if пользователь is not None:
         log_embed.add_field(
-            name="Пользователь",
+            name="Пользователю",
             value=member_id_text(пользователь),
             inline=False,
         )
@@ -959,7 +959,7 @@ async def on_message_edit(before: discord.Message, after: discord.Message) -> No
         color=COLOR,
         timestamp=moscow_time(),
     )
-    embed.add_field(name="Пользователь", value=member_id_text(before.author), inline=False)
+    embed.add_field(name="Пользователю", value=member_id_text(before.author), inline=False)
     embed.add_field(name="Канал", value=channel_id_text(before.channel), inline=False)
     embed.add_field(name="Было", value=f"> {limited_text(before.content, 'Текст отсутствует')}", inline=False)
     embed.add_field(name="Стало", value=f"> {limited_text(after.content, 'Текст отсутствует')}", inline=False)
@@ -1006,7 +1006,7 @@ async def on_message_delete(message: discord.Message) -> None:
         embed.add_field(name="Удалил(а)", value=member_id_text(deleter), inline=False)
         embed.add_field(name="Пользователю", value=member_id_text(message.author), inline=False)
     else:
-        embed.add_field(name="Пользователь", value=member_id_text(message.author), inline=False)
+        embed.add_field(name="Пользователю", value=member_id_text(message.author), inline=False)
 
     embed.add_field(name="Канал", value=channel_id_text(message.channel), inline=False)
 
@@ -1039,7 +1039,7 @@ async def on_message_delete(message: discord.Message) -> None:
 async def on_member_join(member: discord.Member) -> None:
     event_time = datetime.now(timezone.utc)
     embed = discord.Embed(title="Вход на сервер", color=COLOR)
-    embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
+    embed.add_field(name="Пользователю", value=member_id_text(member), inline=False)
     embed.add_field(name="Дата и время входа", value=f"> {discord_datetime(event_time)}", inline=False)
     await send_log(member.guild, embed)
 
@@ -1073,7 +1073,7 @@ async def on_member_remove(member: discord.Member) -> None:
         return
 
     embed = discord.Embed(title="Выход с сервера", color=COLOR)
-    embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
+    embed.add_field(name="Пользователю", value=member_id_text(member), inline=False)
     embed.add_field(name="Дата и время выхода", value=f"> {discord_datetime(event_time)}", inline=False)
     await send_log(member.guild, embed)
 
@@ -1200,7 +1200,7 @@ async def on_member_update(before: discord.Member, after: discord.Member) -> Non
             value=member_id_text(moderator) if moderator else "Не удалось определить",
             inline=False,
         )
-        embed.add_field(name="Пользователь", value=member_id_text(after), inline=False)
+        embed.add_field(name="Пользователю", value=member_id_text(after), inline=False)
         if reason:
             embed.add_field(name="Причина", value=f"> {reason}", inline=False)
     else:
