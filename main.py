@@ -406,7 +406,7 @@ async def timeout_expiry_worker(
         )
         embed.add_field(
             name="Причина",
-            value="> Время действия тайм-аута закончилось",
+            value="> Время действия тайм-аута закончилось.",
             inline=False,
         )
         await send_log(guild, embed)
@@ -573,14 +573,14 @@ async def clear_command(
         )
 
     embed = discord.Embed(
-        title="Удалить сообщения",
+        title="Удаление сообщений",
         description=description,
         color=COLOR,
     )
     await interaction.followup.send(embed=embed, ephemeral=True)
 
     log_embed = discord.Embed(
-        title="Удалить сообщения",
+        title="Удаление сообщений",
         color=COLOR,
         timestamp=moscow_time(),
     )
