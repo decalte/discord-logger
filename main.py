@@ -1070,7 +1070,7 @@ async def on_member_remove(member: discord.Member) -> None:
         reason = pending.get("reason") if pending else (audit.reason or "Причина не указана")
 
         embed = discord.Embed(
-            title="Исключен пользователь",
+            title="Исключение пользователя",
             color=COLOR,
             timestamp=moscow_time(),
         )
