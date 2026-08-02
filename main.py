@@ -400,7 +400,7 @@ async def timeout_expiry_worker(
             timestamp=discord.utils.utcnow(),
         )
         embed.add_field(
-            name="Пользователю",
+            name="Пользователь",
             value=member_id_text(member),
             inline=False,
         )
@@ -1011,8 +1011,8 @@ async def on_message_delete(message: discord.Message) -> None:
         timestamp=moscow_time(),
     )
     if deleter:
-        embed.add_field(name="Удалил(а)", value=member_id_text(deleter), inline=False)
-        embed.add_field(name="Пользователю", value=member_id_text(message.author), inline=False)
+        embed.add_field(name="Исполнитель", value=member_id_text(deleter), inline=False)
+        embed.add_field(name="Пользователь", value=member_id_text(message.author), inline=False)
     else:
         embed.add_field(name="Пользователь", value=member_id_text(message.author), inline=False)
 
@@ -1047,7 +1047,7 @@ async def on_message_delete(message: discord.Message) -> None:
 async def on_member_join(member: discord.Member) -> None:
     event_time = datetime.now(timezone.utc)
     embed = discord.Embed(title="Вход на сервер", color=COLOR)
-    embed.add_field(name="Пользователю", value=member_id_text(member), inline=False)
+    embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
     embed.add_field(name="Дата и время входа", value=f"> {discord_datetime(event_time)}", inline=False)
     await send_log(member.guild, embed)
 
@@ -1070,18 +1070,18 @@ async def on_member_remove(member: discord.Member) -> None:
         reason = pending.get("reason") if pending else (audit.reason or "Причина не указана")
 
         embed = discord.Embed(
-            title="Выгнан пользователь",
+            title="Исключен пользователь",
             color=COLOR,
             timestamp=moscow_time(),
         )
-        embed.add_field(name="Выгнал(а)", value=member_id_text(moderator), inline=False)
-        embed.add_field(name="Пользователя", value=member_id_text(member), inline=False)
+        embed.add_field(name="Исполнитель", value=member_id_text(moderator), inline=False)
+        embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
         embed.add_field(name="Причина", value=f"> {reason}", inline=False)
         await send_log(member.guild, embed)
         return
 
     embed = discord.Embed(title="Выход с сервера", color=COLOR)
-    embed.add_field(name="Пользователю", value=member_id_text(member), inline=False)
+    embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
     embed.add_field(name="Дата и время выхода", value=f"> {discord_datetime(event_time)}", inline=False)
     await send_log(member.guild, embed)
 
@@ -1109,11 +1109,11 @@ async def on_member_ban(guild: discord.Guild, user: discord.User) -> None:
         timestamp=moscow_time(),
     )
     embed.add_field(
-        name="Выдал(а)",
+        name="Исполнитель",
         value=member_id_text(moderator) if moderator else "Не удалось определить",
         inline=False,
     )
-    embed.add_field(name="Пользователю", value=member_id_text(user), inline=False)
+    embed.add_field(name="Пользователь", value=member_id_text(user), inline=False)
     embed.add_field(name="Причина", value=f"> {reason}", inline=False)
     embed.add_field(
         name="До",
@@ -1146,11 +1146,11 @@ async def on_member_unban(guild: discord.Guild, user: discord.User) -> None:
         timestamp=moscow_time(),
     )
     embed.add_field(
-        name="Снял(а)",
+        name="Исполнитель",
         value=member_id_text(moderator) if moderator else "Не удалось определить",
         inline=False,
     )
-    embed.add_field(name="Пользователю", value=member_id_text(user), inline=False)
+    embed.add_field(name="Пользователь", value=member_id_text(user), inline=False)
     embed.add_field(name="Причина", value=f"> {reason}", inline=False)
     await send_log(guild, embed)
 
@@ -1204,11 +1204,11 @@ async def on_member_update(before: discord.Member, after: discord.Member) -> Non
             timestamp=discord.utils.utcnow(),
         )
         embed.add_field(
-            name="Снял(а)",
+            name="Исполнитель",
             value=member_id_text(moderator) if moderator else "Не удалось определить",
             inline=False,
         )
-        embed.add_field(name="Пользователю", value=member_id_text(after), inline=False)
+        embed.add_field(name="Пользователь", value=member_id_text(after), inline=False)
         if reason:
             embed.add_field(name="Причина", value=f"> {reason}", inline=False)
     else:
@@ -1220,11 +1220,11 @@ async def on_member_update(before: discord.Member, after: discord.Member) -> Non
             timestamp=discord.utils.utcnow(),
         )
         embed.add_field(
-            name="Выдал(а)",
+            name="Исполнитель",
             value=member_id_text(moderator) if moderator else "Не удалось определить",
             inline=False,
         )
-        embed.add_field(name="Пользователю", value=member_id_text(after), inline=False)
+        embed.add_field(name="Пользователь", value=member_id_text(after), inline=False)
         embed.add_field(name="Причина", value=f"> {reason}", inline=False)
         embed.add_field(
             name="До",
