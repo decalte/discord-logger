@@ -607,13 +607,38 @@ async def clear_command(
     # гарантированно увидит только вызвавший команду модератор.
     await interaction.response.defer(ephemeral=True)
 
-    def message_check(message: discord.Message) -> bool:
-        return пользователь is None or message.author.id == пользователь.id
+    requested_count = int(количество)
+
+    if пользователь is None:
+        purge_limit = requested_count
+
+        def message_check(message: discord.Message) -> bool:
+            return True
+    else:
+        # Сначала определяем, сколько сообщений нужно просмотреть, чтобы найти
+        # именно запрошенное количество сообщений выбранного пользователя.
+        purge_limit = 0
+        found_count = 0
+        async for message in channel.history(limit=None):
+            purge_limit += 1
+            if message.author.id == пользователь.id:
+                found_count += 1
+                if found_count >= requested_count:
+                    break
+
+        remaining_to_delete = requested_count
+
+        def message_check(message: discord.Message) -> bool:
+            nonlocal remaining_to_delete
+            if message.author.id != пользователь.id or remaining_to_delete <= 0:
+                return False
+            remaining_to_delete -= 1
+            return True
 
     clear_in_progress_channels.add(channel.id)
     try:
         deleted = await channel.purge(
-            limit=int(количество),
+            limit=purge_limit,
             check=message_check,
             reason=f"/clear | Модератор: {moderator} ({moderator.id})",
         )
@@ -1473,16 +1498,14 @@ def channel_overwrite_changes(
     return changes
 
 
-def channel_type_text(channel: discord.abc.GuildChannel) -> str:
-    names = {
-        discord.ChannelType.text: "Текстовый",
-        discord.ChannelType.voice: "Голосовой",
-        discord.ChannelType.category: "Категория",
-        discord.ChannelType.news: "Новостной",
-        discord.ChannelType.stage_voice: "Трибуна",
-        discord.ChannelType.forum: "Форум",
+def deleted_channel_text(channel: discord.abc.GuildChannel) -> str:
+    prefix_types = {
+        discord.ChannelType.text,
+        discord.ChannelType.news,
+        discord.ChannelType.forum,
     }
-    return names.get(channel.type, str(channel.type))
+    prefix = "#" if channel.type in prefix_types else ""
+    return f"{prefix}{channel.name}\nID: `{channel.id}`"
 
 
 def channel_event_title(action: str, channel: discord.abc.GuildChannel) -> str:
@@ -1543,8 +1566,11 @@ async def on_guild_channel_create(channel: discord.abc.GuildChannel) -> None:
     actor = await audit_user_for(channel.guild, discord.AuditLogAction.channel_create, channel.id)
     embed = discord.Embed(title=channel_event_title("Создание", channel), color=COLOR, timestamp=moscow_time())
     embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
-    embed.add_field(name=channel_entity_name(channel), value=channel_id_text(channel), inline=False)
-    embed.add_field(name="Тип", value=f"> {channel_type_text(channel)}", inline=False)
+    if channel.type == discord.ChannelType.category:
+        channel_value = f"> {channel.name}\nID: `{channel.id}`"
+    else:
+        channel_value = channel_id_text(channel)
+    embed.add_field(name=channel_entity_name(channel), value=channel_value, inline=False)
     if channel.category:
         embed.add_field(name="Категория", value=channel_id_text(channel.category), inline=False)
     await send_server_log(channel.guild, embed)
@@ -1556,8 +1582,7 @@ async def on_guild_channel_delete(channel: discord.abc.GuildChannel) -> None:
     actor = await audit_user_for(channel.guild, discord.AuditLogAction.channel_delete, channel.id)
     embed = discord.Embed(title=channel_event_title("Удаление", channel), color=COLOR, timestamp=moscow_time())
     embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
-    embed.add_field(name=channel_entity_name(channel), value=f"> {channel.name}\nID: `{channel.id}`", inline=False)
-    embed.add_field(name="Тип", value=f"> {channel_type_text(channel)}", inline=False)
+    embed.add_field(name=channel_entity_name(channel), value=deleted_channel_text(channel), inline=False)
     await send_server_log(channel.guild, embed)
 
 
@@ -1570,8 +1595,6 @@ async def on_guild_channel_update(before: discord.abc.GuildChannel, after: disco
         old = before.category.name if getattr(before, "category", None) else "Без категории"
         new = after.category.name if getattr(after, "category", None) else "Без категории"
         changes.append(("Категория", f"> Было: `{old}`\n> Стало: `{new}`"))
-    if before.position != after.position:
-        changes.append(("Позиция", f"> Было: `{before.position}`\n> Стало: `{after.position}`"))
     if hasattr(before, "topic"):
         old_topic = normalized_optional_text(getattr(before, "topic", None))
         new_topic = normalized_optional_text(getattr(after, "topic", None))
@@ -1628,8 +1651,6 @@ async def on_guild_role_update(before: discord.Role, after: discord.Role) -> Non
         changes.append(("Название", f"> Было: `{before.name}`\n> Стало: `{after.name}`"))
     if before.color != after.color:
         changes.append(("Цвет", f"> Было: `{before.color}`\n> Стало: `{after.color}`"))
-    if before.position != after.position:
-        changes.append(("Позиция", f"> Было: `{before.position}`\n> Стало: `{after.position}`"))
     if before.hoist != after.hoist:
         changes.append(("Отображать отдельно", f"> Было: `{yes_no(before.hoist)}`\n> Стало: `{yes_no(after.hoist)}`"))
     if before.mentionable != after.mentionable:
@@ -1663,21 +1684,56 @@ async def log_member_role_changes(before: discord.Member, after: discord.Member)
     removed = [role for role in before.roles if role.id not in after_ids]
     if not added and not removed:
         return
+
     await asyncio.sleep(1)
-    actor = await audit_user_for(after.guild, discord.AuditLogAction.member_role_update, after.id)
-    for role in added:
-        fresh_role = await get_fresh_role(after.guild, role.id)
-        displayed_role = fresh_role or role
-        embed = discord.Embed(title="Выдача роли", color=COLOR, timestamp=moscow_time())
-        embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
+    actor = await audit_user_for(
+        after.guild,
+        discord.AuditLogAction.member_role_update,
+        after.id,
+    )
+    actor_text = member_id_text(actor) if actor else "Не удалось определить"
+
+    if added:
+        displayed_roles: list[discord.Role] = []
+        for role in added:
+            fresh_role = await get_fresh_role(after.guild, role.id)
+            displayed_roles.append(fresh_role or role)
+
+        roles_text = "\n".join(
+            f"{role.mention}\nID: `{role.id}`"
+            for role in displayed_roles
+        )
+        embed = discord.Embed(
+            title="Выдача роли" if len(displayed_roles) == 1 else "Выдача ролей",
+            color=COLOR,
+            timestamp=moscow_time(),
+        )
+        embed.add_field(name="Исполнитель", value=actor_text, inline=False)
         embed.add_field(name="Пользователь", value=member_id_text(after), inline=False)
-        embed.add_field(name="Роль", value=role_id_text(displayed_role), inline=False)
+        embed.add_field(
+            name="Роль" if len(displayed_roles) == 1 else "Роли",
+            value=roles_text[:1024],
+            inline=False,
+        )
         await send_server_log(after.guild, embed)
-    for role in removed:
-        embed = discord.Embed(title="Снятие роли", color=COLOR, timestamp=moscow_time())
-        embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
+
+    if removed:
+        roles_text = "\n".join(
+            f"{role.mention}\nID: `{role.id}`"
+            for role in removed
+        )
+        embed = discord.Embed(
+            title="Снятие роли" if len(removed) == 1 else "Снятие ролей",
+            color=COLOR,
+            timestamp=moscow_time(),
+        )
+        embed.add_field(name="Исполнитель", value=actor_text, inline=False)
         embed.add_field(name="Пользователь", value=member_id_text(after), inline=False)
-        embed.add_field(name="Роль", value=role_id_text(role), inline=False)
+        embed.add_field(
+            name="Роль" if len(removed) == 1 else "Роли",
+            value=roles_text[:1024],
+            inline=False,
+        )
         await send_server_log(after.guild, embed)
 
 
