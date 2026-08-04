@@ -1391,16 +1391,40 @@ PERMISSION_NAMES_RU = {
     "use_soundboard": "Использование звуковой панели",
     "use_external_sounds": "Использование внешних звуков",
     "send_voice_messages": "Отправка голосовых сообщений",
+    "read_messages": "Просмотр канала",
+    "administrator": "Администратор",
+    "kick_members": "Исключение участников",
+    "ban_members": "Блокировка участников",
+    "moderate_members": "Выдача тайм-аута",
+    "change_nickname": "Изменение своего никнейма",
+    "manage_nicknames": "Управление никнеймами",
+    "manage_guild": "Управление сервером",
+    "view_audit_log": "Просмотр журнала аудита",
+    "view_guild_insights": "Просмотр аналитики сервера",
+    "manage_events": "Управление событиями",
+    "create_events": "Создание событий",
+    "manage_expressions": "Управление эмодзи и стикерами",
+    "use_embedded_activities": "Использование встроенных приложений",
+    "use_external_apps": "Использование внешних приложений",
+    "pin_messages": "Закрепление сообщений",
+    "bypass_slowmode": "Обход медленного режима",
 }
 
 
 def permission_name_ru(name: str) -> str:
-    return PERMISSION_NAMES_RU.get(name, name.replace("_", " ").capitalize())
+    translated = PERMISSION_NAMES_RU.get(name)
+    if translated is not None:
+        return translated
+    return "Неизвестное разрешение"
 
 
 def overwrite_target_text(target: discord.Role | discord.Member) -> str:
     kind = "Роль" if isinstance(target, discord.Role) else "Пользователь"
-    return f"{kind}: {target.mention}\nID: `{target.id}`"
+    if isinstance(target, discord.Role) and target.is_default():
+        mention = "@everyone"
+    else:
+        mention = target.mention
+    return f"{kind}: {mention}\nID: `{target.id}`"
 
 
 def channel_overwrite_changes(
@@ -1488,15 +1512,29 @@ def permission_changes(before: discord.Permissions, after: discord.Permissions) 
     for name, value in after:
         old_value = getattr(before, name, False)
         if value and not old_value:
-            added.append(name)
+            added.append(permission_name_ru(name))
         elif old_value and not value:
-            removed.append(name)
+            removed.append(permission_name_ru(name))
     return added, removed
 
 
-async def audit_user_for(guild: discord.Guild, action: discord.AuditLogAction, target_id: int) -> discord.abc.User | None:
-    entry = await find_audit_entry(guild, action, target_id, max_age=20)
-    return entry.user if entry else None
+async def audit_user_for(
+    guild: discord.Guild,
+    action: discord.AuditLogAction,
+    target_id: int,
+    *,
+    attempts: int = 8,
+    delay: float = 0.75,
+    max_age: int = 30,
+) -> discord.abc.User | None:
+    """Ждёт появления нужной записи в журнале аудита и возвращает исполнителя."""
+    for attempt in range(attempts):
+        entry = await find_audit_entry(guild, action, target_id, max_age=max_age)
+        if entry is not None:
+            return entry.user
+        if attempt < attempts - 1:
+            await asyncio.sleep(delay)
+    return None
 
 
 @bot.event
@@ -1551,7 +1589,6 @@ async def on_guild_channel_update(before: discord.abc.GuildChannel, after: disco
         changes.extend(channel_overwrite_changes(before, after))
     if not changes:
         return
-    await asyncio.sleep(1)
     actor = await audit_user_for(after.guild, discord.AuditLogAction.channel_update, after.id)
     embed = discord.Embed(title=channel_event_title("Изменение", after), color=COLOR, timestamp=moscow_time())
     embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
@@ -1563,7 +1600,7 @@ async def on_guild_channel_update(before: discord.abc.GuildChannel, after: disco
 
 @bot.event
 async def on_guild_role_create(role: discord.Role) -> None:
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(3)
     actor = await audit_user_for(role.guild, discord.AuditLogAction.role_create, role.id)
     fresh_role = await get_fresh_role(role.guild, role.id)
     displayed_role = fresh_role or role
@@ -1580,7 +1617,7 @@ async def on_guild_role_delete(role: discord.Role) -> None:
     actor = await audit_user_for(role.guild, discord.AuditLogAction.role_delete, role.id)
     embed = discord.Embed(title="Удаление роли", color=COLOR, timestamp=moscow_time())
     embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
-    embed.add_field(name="Роль", value=f"> {role.name}\nID: `{role.id}`", inline=False)
+    embed.add_field(name="Роль", value=f"@{role.name}\nID: `{role.id}`", inline=False)
     await send_server_log(role.guild, embed)
 
 
@@ -1607,7 +1644,7 @@ async def on_guild_role_update(before: discord.Role, after: discord.Role) -> Non
         changes.append(("Разрешения", "\n".join(parts)[:1024]))
     if not changes:
         return
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(3)
     actor = await audit_user_for(after.guild, discord.AuditLogAction.role_update, after.id)
     fresh_role = await get_fresh_role(after.guild, after.id)
     displayed_role = fresh_role or after
