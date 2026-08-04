@@ -20,6 +20,7 @@ TOKEN = os.getenv("TOKEN")
 # Старые модерационные логи остаются в прежнем канале.
 MOD_LOG_CHANNEL_ID = int(os.getenv("MOD_LOG_CHANNEL_ID", "1531038064229748888"))
 SERVER_LOG_CHANNEL_ID = int(os.getenv("SERVER_LOG_CHANNEL_ID", "1534061310940151829"))
+MESSAGE_LOG_CHANNEL_ID = int(os.getenv("MESSAGE_LOG_CHANNEL_ID", "1534075561104642098"))
 
 COLOR = discord.Color(0x303136)
 MOSCOW_TZ = timezone(timedelta(hours=3))
@@ -273,6 +274,10 @@ async def send_log(guild: discord.Guild, embed: discord.Embed) -> discord.Messag
 
 async def send_server_log(guild: discord.Guild, embed: discord.Embed) -> discord.Message | None:
     return await send_log_to(guild, embed, SERVER_LOG_CHANNEL_ID)
+
+
+async def send_message_log(guild: discord.Guild, embed: discord.Embed) -> discord.Message | None:
+    return await send_log_to(guild, embed, MESSAGE_LOG_CHANNEL_ID)
 
 
 
@@ -547,6 +552,7 @@ async def on_ready() -> None:
     print(f"Бот запущен: {bot.user}")
     print(f"Модерационные логи: {MOD_LOG_CHANNEL_ID}")
     print(f"Серверные логи: {SERVER_LOG_CHANNEL_ID}")
+    print(f"Логи сообщений: {MESSAGE_LOG_CHANNEL_ID}")
 
 
 # -----------------------------------------------------------------------------
@@ -692,15 +698,15 @@ async def clear_command(
     await send_log_to(
         guild,
         log_embed,
-        MOD_LOG_CHANNEL_ID,
+        MESSAGE_LOG_CHANNEL_ID,
     )
 
-    log_channel = await get_log_channel(guild, MOD_LOG_CHANNEL_ID)
+    log_channel = await get_log_channel(guild, MESSAGE_LOG_CHANNEL_ID)
     if log_channel is not None:
         try:
             await log_channel.send(file=report_file)
         except (discord.Forbidden, discord.HTTPException) as error:
-            print(f"Ошибка отправки отчёта /clear в канал {MOD_LOG_CHANNEL_ID}: {error}")
+            print(f"Ошибка отправки отчёта /clear в канал {MESSAGE_LOG_CHANNEL_ID}: {error}")
 
 
 @bot.tree.command(name="ban", description="Забанить пользователя")
@@ -1068,7 +1074,7 @@ async def on_message_edit(before: discord.Message, after: discord.Message) -> No
     embed.add_field(name="Было", value=f"> {limited_text(before.content, 'Текст отсутствует')}", inline=False)
     embed.add_field(name="Стало", value=f"> {limited_text(after.content, 'Текст отсутствует')}", inline=False)
     embed.add_field(name="Ссылка", value=f"> [Перейти к сообщению]({after.jump_url})", inline=False)
-    await send_log(before.guild, embed)
+    await send_message_log(before.guild, embed)
 
 
 async def find_message_deleter(message: discord.Message) -> discord.abc.User | None:
@@ -1132,7 +1138,7 @@ async def on_message_delete(message: discord.Message) -> None:
             inline=False,
         )
 
-    await send_log(message.guild, embed)
+    await send_message_log(message.guild, embed)
 
 
 # -----------------------------------------------------------------------------
