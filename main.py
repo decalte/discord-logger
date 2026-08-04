@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import random
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -15,8 +16,14 @@ from discord.ext import commands
 
 TOKEN = os.getenv("TOKEN")
 
-# Один канал для всех логов.
-LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "1531038064229748888"))
+# Раздельные каналы логов.
+# Старые модерационные логи остаются в прежнем канале.
+MOD_LOG_CHANNEL_ID = int(os.getenv("MOD_LOG_CHANNEL_ID", "1531038064229748888"))
+SERVER_LOG_CHANNEL_ID = int(os.getenv("SERVER_LOG_CHANNEL_ID", "1534061310940151829"))
+CASE_LOG_CHANNEL_ID = int(os.getenv("CASE_LOG_CHANNEL_ID", "1534061440582025397"))
+
+# Только этот пользователь может выдавать и снимать кейсы/призы.
+CASE_ADMIN_USER_ID = 1483369868140220417
 
 COLOR = discord.Color(0x303136)
 MOSCOW_TZ = timezone(timedelta(hours=3))
@@ -51,6 +58,8 @@ NO_ACCESS_TITLES = {
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMP_BANS_FILE = BASE_DIR / "temporary_bans.json"
+CASES_FILE = BASE_DIR / "cases.json"
+CASE_PRIZES_FILE = BASE_DIR / "case_prizes.json"
 
 intents = discord.Intents.default()
 intents.guilds = True
@@ -176,30 +185,49 @@ def save_json(path: Path, data: Any) -> None:
         print(f"Не удалось сохранить {path.name}: {error}")
 
 
-async def get_log_channel(guild: discord.Guild) -> discord.abc.Messageable | None:
-    channel = guild.get_channel(LOG_CHANNEL_ID)
+async def get_log_channel(
+    guild: discord.Guild,
+    channel_id: int,
+) -> discord.abc.Messageable | None:
+    channel = guild.get_channel(channel_id)
     if channel is None:
         try:
-            channel = await guild.fetch_channel(LOG_CHANNEL_ID)
+            channel = await guild.fetch_channel(channel_id)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException) as error:
-            print(f"Не удалось получить канал логов {LOG_CHANNEL_ID}: {error}")
+            print(f"Не удалось получить канал логов {channel_id}: {error}")
             return None
 
     if not isinstance(channel, discord.abc.Messageable):
-        print(f"Канал {LOG_CHANNEL_ID} не поддерживает отправку сообщений.")
+        print(f"Канал {channel_id} не поддерживает отправку сообщений.")
         return None
     return channel
 
 
-async def send_log(guild: discord.Guild, embed: discord.Embed) -> discord.Message | None:
-    channel = await get_log_channel(guild)
+async def send_log_to(
+    guild: discord.Guild,
+    embed: discord.Embed,
+    channel_id: int,
+) -> discord.Message | None:
+    channel = await get_log_channel(guild, channel_id)
     if channel is None:
         return None
     try:
         return await channel.send(embed=embed)
     except (discord.Forbidden, discord.HTTPException) as error:
-        print(f"Ошибка отправки лога: {error}")
+        print(f"Ошибка отправки лога в канал {channel_id}: {error}")
         return None
+
+
+async def send_log(guild: discord.Guild, embed: discord.Embed) -> discord.Message | None:
+    return await send_log_to(guild, embed, MOD_LOG_CHANNEL_ID)
+
+
+async def send_server_log(guild: discord.Guild, embed: discord.Embed) -> discord.Message | None:
+    return await send_log_to(guild, embed, SERVER_LOG_CHANNEL_ID)
+
+
+async def send_case_log(guild: discord.Guild, embed: discord.Embed) -> discord.Message | None:
+    return await send_log_to(guild, embed, CASE_LOG_CHANNEL_ID)
 
 
 async def find_audit_entry(
@@ -265,6 +293,126 @@ def can_moderate_target(
     if bot_member is None or target.top_role >= bot_member.top_role:
         return False, "Роль бота должна находиться выше роли пользователя."
     return True, None
+
+
+# -----------------------------------------------------------------------------
+# Система кейсов
+# -----------------------------------------------------------------------------
+
+CASE_PRIZES = [
+    {"name": "Ничего", "weight": 88.0, "kind": "nothing"},
+    {"name": "2 кейса", "weight": 7.0, "kind": "cases", "amount": 2},
+    {"name": "Spotify Premium • 1 месяц", "weight": 1.5, "kind": "manual"},
+    {"name": "100 Telegram Звёзд", "weight": 1.5, "kind": "manual"},
+    {"name": "250 Telegram Звёзд", "weight": 0.7, "kind": "manual"},
+    {"name": "Telegram Premium • 1 месяц", "weight": 0.5, "kind": "manual"},
+    {"name": "500 рублей", "weight": 0.4, "kind": "manual"},
+    {"name": "Украшение до 7$", "weight": 0.25, "kind": "manual"},
+    {"name": "Nitro Full • 1 месяц", "weight": 0.15, "kind": "manual"},
+]
+
+case_open_locks: set[tuple[int, int]] = set()
+
+
+def russian_case_count(value: int) -> str:
+    last_two = value % 100
+    last_one = value % 10
+    if 11 <= last_two <= 14:
+        word = "кейсов"
+    elif last_one == 1:
+        word = "кейс"
+    elif 2 <= last_one <= 4:
+        word = "кейса"
+    else:
+        word = "кейсов"
+    return f"{value} {word}"
+
+
+def load_cases() -> dict[str, dict[str, Any]]:
+    data = load_json(CASES_FILE, {})
+    return data if isinstance(data, dict) else {}
+
+
+def save_cases(data: dict[str, dict[str, Any]]) -> None:
+    save_json(CASES_FILE, data)
+
+
+def case_key(guild_id: int, user_id: int) -> str:
+    return f"{guild_id}:{user_id}"
+
+
+def get_case_record(guild_id: int, user_id: int) -> dict[str, Any]:
+    data = load_cases()
+    key = case_key(guild_id, user_id)
+    record = data.get(key, {})
+    return {
+        "balance": max(0, int(record.get("balance", 0))),
+        "last_nothing": bool(record.get("last_nothing", False)),
+    }
+
+
+def update_case_record(guild_id: int, user_id: int, *, balance: int, last_nothing: bool | None = None) -> None:
+    data = load_cases()
+    key = case_key(guild_id, user_id)
+    old = data.get(key, {})
+    data[key] = {
+        "balance": max(0, int(balance)),
+        "last_nothing": bool(old.get("last_nothing", False) if last_nothing is None else last_nothing),
+    }
+    save_cases(data)
+
+
+def load_pending_prizes() -> dict[str, list[dict[str, Any]]]:
+    data = load_json(CASE_PRIZES_FILE, {})
+    return data if isinstance(data, dict) else {}
+
+
+def save_pending_prizes(data: dict[str, list[dict[str, Any]]]) -> None:
+    save_json(CASE_PRIZES_FILE, data)
+
+
+def add_pending_prize(guild_id: int, user_id: int, prize: str) -> None:
+    data = load_pending_prizes()
+    key = case_key(guild_id, user_id)
+    data.setdefault(key, []).append({"prize": prize, "timestamp": datetime.now(timezone.utc).timestamp()})
+    save_pending_prizes(data)
+
+
+def remove_pending_prize(guild_id: int, user_id: int, prize: str) -> bool:
+    data = load_pending_prizes()
+    key = case_key(guild_id, user_id)
+    records = data.get(key, [])
+    for index, item in enumerate(records):
+        if str(item.get("prize", "")).casefold() == prize.casefold():
+            records.pop(index)
+            if records:
+                data[key] = records
+            else:
+                data.pop(key, None)
+            save_pending_prizes(data)
+            return True
+    return False
+
+
+def choose_case_prize(previous_was_nothing: bool) -> dict[str, Any]:
+    available = CASE_PRIZES
+    # «Ничего» не выпадает два раза подряд.
+    if previous_was_nothing:
+        available = [item for item in CASE_PRIZES if item["kind"] != "nothing"]
+    return random.choices(
+        available,
+        weights=[float(item["weight"]) for item in available],
+        k=1,
+    )[0]
+
+
+async def send_case_no_access(interaction: discord.Interaction, title: str) -> None:
+    embed = discord.Embed(
+        title=title,
+        description=f"{interaction.user.mention}, у Вас **недостаточно прав** для использования этой команды.",
+        color=COLOR,
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # -----------------------------------------------------------------------------
@@ -469,7 +617,9 @@ async def on_ready() -> None:
 
     await bot.change_presence(status=discord.Status.idle)
     print(f"Бот запущен: {bot.user}")
-    print(f"Все логи отправляются в канал ID: {LOG_CHANNEL_ID}")
+    print(f"Модерационные логи: {MOD_LOG_CHANNEL_ID}")
+    print(f"Серверные логи: {SERVER_LOG_CHANNEL_ID}")
+    print(f"Логи кейсов: {CASE_LOG_CHANNEL_ID}")
 
 
 # -----------------------------------------------------------------------------
@@ -954,6 +1104,212 @@ async def untimeout_command(
 
 
 # -----------------------------------------------------------------------------
+# Slash-команды кейсов
+# -----------------------------------------------------------------------------
+
+@bot.tree.command(name="case", description="Открыть кейс")
+@app_commands.guild_only()
+async def case_command(interaction: discord.Interaction) -> None:
+    guild = interaction.guild
+    user = interaction.user
+    if guild is None or not isinstance(user, discord.Member):
+        return
+
+    key = (guild.id, user.id)
+    if key in case_open_locks:
+        await send_private_error(interaction, "Открыть кейс", "Дождитесь завершения текущего открытия.")
+        return
+
+    record = get_case_record(guild.id, user.id)
+    if record["balance"] <= 0:
+        embed = discord.Embed(
+            title="Открыть кейс",
+            description=f"{user.mention}, у Вас **нет доступных кейсов.**",
+            color=COLOR,
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+
+    case_open_locks.add(key)
+    try:
+        opening_embed = discord.Embed(title="Открыть кейс", color=COLOR)
+        opening_embed.add_field(name="Пользователь", value=member_id_text(user), inline=False)
+        opening_embed.add_field(name="Статус", value="> Выполняется открытие кейса...", inline=False)
+        await interaction.response.send_message(embed=opening_embed)
+        await asyncio.sleep(2)
+
+        prize = choose_case_prize(record["last_nothing"])
+        balance = record["balance"] - 1
+        if prize["kind"] == "cases":
+            balance += int(prize.get("amount", 0))
+        elif prize["kind"] == "manual":
+            add_pending_prize(guild.id, user.id, str(prize["name"]))
+
+        update_case_record(
+            guild.id,
+            user.id,
+            balance=balance,
+            last_nothing=prize["kind"] == "nothing",
+        )
+
+        result_embed = discord.Embed(title="Открыть кейс", color=COLOR)
+        result_embed.add_field(name="Пользователь", value=member_id_text(user), inline=False)
+        result_embed.add_field(name="Приз", value=f"> {prize['name']}", inline=False)
+        if prize["kind"] == "cases":
+            result_embed.add_field(name="Добавлено", value=f"> +{int(prize.get('amount', 0))}", inline=False)
+        result_embed.add_field(name="Осталось кейсов", value=f"> {balance}", inline=False)
+        if prize["kind"] == "manual":
+            result_embed.add_field(
+                name="Получение",
+                value="> Для получения приза обратитесь к администрации.",
+                inline=False,
+            )
+        await interaction.edit_original_response(embed=result_embed)
+
+        log_embed = discord.Embed(title="Открытие кейса", color=COLOR, timestamp=moscow_time())
+        log_embed.add_field(name="Пользователь", value=member_id_text(user), inline=False)
+        log_embed.add_field(name="Приз", value=f"> {prize['name']}", inline=False)
+        log_embed.add_field(name="Осталось кейсов", value=f"> {balance}", inline=False)
+        await send_case_log(guild, log_embed)
+    finally:
+        case_open_locks.discard(key)
+
+
+@bot.tree.command(name="addcase", description="Выдать кейсы пользователю")
+@app_commands.describe(пользователь="Пользователь", количество="Количество кейсов")
+@app_commands.guild_only()
+async def addcase_command(
+    interaction: discord.Interaction,
+    пользователь: discord.Member,
+    количество: app_commands.Range[int, 1, 1000],
+) -> None:
+    guild = interaction.guild
+    if guild is None:
+        return
+    if interaction.user.id != CASE_ADMIN_USER_ID:
+        await send_case_no_access(interaction, "Выдача кейсов")
+        return
+
+    record = get_case_record(guild.id, пользователь.id)
+    new_balance = record["balance"] + int(количество)
+    update_case_record(guild.id, пользователь.id, balance=new_balance)
+
+    embed = discord.Embed(title="Выдача кейсов", color=COLOR)
+    embed.add_field(name="Исполнитель", value=member_id_text(interaction.user), inline=False)
+    embed.add_field(name="Пользователь", value=member_id_text(пользователь), inline=False)
+    embed.add_field(name="Количество", value=f"> +{int(количество)}", inline=False)
+    embed.add_field(name="Баланс", value=f"> {russian_case_count(new_balance)}", inline=False)
+    await interaction.response.send_message(embed=embed)
+
+    log_embed = discord.Embed(title="Выдача кейсов", color=COLOR, timestamp=moscow_time())
+    for field in embed.fields:
+        log_embed.add_field(name=field.name, value=field.value, inline=False)
+    await send_case_log(guild, log_embed)
+
+
+@bot.tree.command(name="removecase", description="Снять кейсы у пользователя")
+@app_commands.describe(пользователь="Пользователь", количество="Количество кейсов")
+@app_commands.guild_only()
+async def removecase_command(
+    interaction: discord.Interaction,
+    пользователь: discord.Member,
+    количество: app_commands.Range[int, 1, 1000],
+) -> None:
+    guild = interaction.guild
+    if guild is None:
+        return
+    if interaction.user.id != CASE_ADMIN_USER_ID:
+        await send_case_no_access(interaction, "Снятие кейсов")
+        return
+
+    record = get_case_record(guild.id, пользователь.id)
+    if record["balance"] < int(количество):
+        await send_private_error(
+            interaction,
+            "Снятие кейсов",
+            f"{interaction.user.mention}, у пользователя недостаточно кейсов.",
+        )
+        return
+
+    new_balance = record["balance"] - int(количество)
+    update_case_record(guild.id, пользователь.id, balance=new_balance)
+
+    embed = discord.Embed(title="Снятие кейсов", color=COLOR)
+    embed.add_field(name="Исполнитель", value=member_id_text(interaction.user), inline=False)
+    embed.add_field(name="Пользователь", value=member_id_text(пользователь), inline=False)
+    embed.add_field(name="Количество", value=f"> -{int(количество)}", inline=False)
+    embed.add_field(name="Баланс", value=f"> {russian_case_count(new_balance)}", inline=False)
+    await interaction.response.send_message(embed=embed)
+
+    log_embed = discord.Embed(title="Снятие кейсов", color=COLOR, timestamp=moscow_time())
+    for field in embed.fields:
+        log_embed.add_field(name=field.name, value=field.value, inline=False)
+    await send_case_log(guild, log_embed)
+
+
+@bot.tree.command(name="giveprize", description="Отметить приз как выданный")
+@app_commands.describe(пользователь="Пользователь", приз="Название приза")
+@app_commands.guild_only()
+async def giveprize_command(
+    interaction: discord.Interaction,
+    пользователь: discord.Member,
+    приз: str,
+) -> None:
+    guild = interaction.guild
+    if guild is None:
+        return
+    if interaction.user.id != CASE_ADMIN_USER_ID:
+        await send_case_no_access(interaction, "Выдача приза")
+        return
+
+    if not remove_pending_prize(guild.id, пользователь.id, приз.strip()):
+        await send_private_error(interaction, "Выдача приза", "У пользователя нет такого ожидающего приза.")
+        return
+
+    embed = discord.Embed(title="Выдача приза", color=COLOR)
+    embed.add_field(name="Исполнитель", value=member_id_text(interaction.user), inline=False)
+    embed.add_field(name="Пользователь", value=member_id_text(пользователь), inline=False)
+    embed.add_field(name="Приз", value=f"> {limited_text(приз)}", inline=False)
+    await interaction.response.send_message(embed=embed)
+
+    log_embed = discord.Embed(title="Выдача приза", color=COLOR, timestamp=moscow_time())
+    for field in embed.fields:
+        log_embed.add_field(name=field.name, value=field.value, inline=False)
+    await send_case_log(guild, log_embed)
+
+
+@bot.tree.command(name="removeprize", description="Снять ожидающий приз")
+@app_commands.describe(пользователь="Пользователь", приз="Название приза")
+@app_commands.guild_only()
+async def removeprize_command(
+    interaction: discord.Interaction,
+    пользователь: discord.Member,
+    приз: str,
+) -> None:
+    guild = interaction.guild
+    if guild is None:
+        return
+    if interaction.user.id != CASE_ADMIN_USER_ID:
+        await send_case_no_access(interaction, "Снятие приза")
+        return
+
+    if not remove_pending_prize(guild.id, пользователь.id, приз.strip()):
+        await send_private_error(interaction, "Снятие приза", "У пользователя нет такого ожидающего приза.")
+        return
+
+    embed = discord.Embed(title="Снятие приза", color=COLOR)
+    embed.add_field(name="Исполнитель", value=member_id_text(interaction.user), inline=False)
+    embed.add_field(name="Пользователь", value=member_id_text(пользователь), inline=False)
+    embed.add_field(name="Приз", value=f"> {limited_text(приз)}", inline=False)
+    await interaction.response.send_message(embed=embed)
+
+    log_embed = discord.Embed(title="Снятие приза", color=COLOR, timestamp=moscow_time())
+    for field in embed.fields:
+        log_embed.add_field(name=field.name, value=field.value, inline=False)
+    await send_case_log(guild, log_embed)
+
+
+# -----------------------------------------------------------------------------
 # Логи сообщений
 # -----------------------------------------------------------------------------
 
@@ -972,7 +1328,7 @@ async def on_message_edit(before: discord.Message, after: discord.Message) -> No
     embed.add_field(name="Было", value=f"> {limited_text(before.content, 'Текст отсутствует')}", inline=False)
     embed.add_field(name="Стало", value=f"> {limited_text(after.content, 'Текст отсутствует')}", inline=False)
     embed.add_field(name="Ссылка", value=f"> [Перейти к сообщению]({after.jump_url})", inline=False)
-    await send_log(before.guild, embed)
+    await send_server_log(before.guild, embed)
 
 
 async def find_message_deleter(message: discord.Message) -> discord.abc.User | None:
@@ -1036,7 +1392,7 @@ async def on_message_delete(message: discord.Message) -> None:
             inline=False,
         )
 
-    await send_log(message.guild, embed)
+    await send_server_log(message.guild, embed)
 
 
 # -----------------------------------------------------------------------------
@@ -1049,7 +1405,7 @@ async def on_member_join(member: discord.Member) -> None:
     embed = discord.Embed(title="Вход на сервер", color=COLOR)
     embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
     embed.add_field(name="Дата и время входа", value=f"> {discord_datetime(event_time)}", inline=False)
-    await send_log(member.guild, embed)
+    await send_server_log(member.guild, embed)
 
 
 @bot.event
@@ -1083,7 +1439,7 @@ async def on_member_remove(member: discord.Member) -> None:
     embed = discord.Embed(title="Выход с сервера", color=COLOR)
     embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
     embed.add_field(name="Дата и время выхода", value=f"> {discord_datetime(event_time)}", inline=False)
-    await send_log(member.guild, embed)
+    await send_server_log(member.guild, embed)
 
 
 # -----------------------------------------------------------------------------
@@ -1159,8 +1515,7 @@ async def on_member_unban(guild: discord.Guild, user: discord.User) -> None:
 # Тайм-ауты и снятие тайм-аутов
 # -----------------------------------------------------------------------------
 
-@bot.event
-async def on_member_update(before: discord.Member, after: discord.Member) -> None:
+async def handle_timeout_update(before: discord.Member, after: discord.Member) -> None:
     if before.timed_out_until == after.timed_out_until:
         return
 
@@ -1233,6 +1588,223 @@ async def on_member_update(before: discord.Member, after: discord.Member) -> Non
         )
 
     await send_log(after.guild, embed)
+
+
+# -----------------------------------------------------------------------------
+# Логи каналов, ролей и голосовых каналов
+# -----------------------------------------------------------------------------
+
+def role_id_text(role: discord.Role) -> str:
+    return f"{role.mention}\nID: `{role.id}`"
+
+
+def channel_type_text(channel: discord.abc.GuildChannel) -> str:
+    names = {
+        discord.ChannelType.text: "Текстовый",
+        discord.ChannelType.voice: "Голосовой",
+        discord.ChannelType.category: "Категория",
+        discord.ChannelType.news: "Новостной",
+        discord.ChannelType.stage_voice: "Трибуна",
+        discord.ChannelType.forum: "Форум",
+    }
+    return names.get(channel.type, str(channel.type))
+
+
+def yes_no(value: bool) -> str:
+    return "Да" if value else "Нет"
+
+
+def permission_changes(before: discord.Permissions, after: discord.Permissions) -> tuple[list[str], list[str]]:
+    added: list[str] = []
+    removed: list[str] = []
+    for name, value in after:
+        old_value = getattr(before, name, False)
+        if value and not old_value:
+            added.append(name)
+        elif old_value and not value:
+            removed.append(name)
+    return added, removed
+
+
+async def audit_user_for(guild: discord.Guild, action: discord.AuditLogAction, target_id: int) -> discord.abc.User | None:
+    entry = await find_audit_entry(guild, action, target_id, max_age=20)
+    return entry.user if entry else None
+
+
+@bot.event
+async def on_guild_channel_create(channel: discord.abc.GuildChannel) -> None:
+    await asyncio.sleep(1)
+    actor = await audit_user_for(channel.guild, discord.AuditLogAction.channel_create, channel.id)
+    embed = discord.Embed(title="Создание канала", color=COLOR, timestamp=moscow_time())
+    embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
+    embed.add_field(name="Канал", value=channel_id_text(channel), inline=False)
+    embed.add_field(name="Тип", value=f"> {channel_type_text(channel)}", inline=False)
+    if channel.category:
+        embed.add_field(name="Категория", value=channel_id_text(channel.category), inline=False)
+    await send_server_log(channel.guild, embed)
+
+
+@bot.event
+async def on_guild_channel_delete(channel: discord.abc.GuildChannel) -> None:
+    await asyncio.sleep(1)
+    actor = await audit_user_for(channel.guild, discord.AuditLogAction.channel_delete, channel.id)
+    embed = discord.Embed(title="Удаление канала", color=COLOR, timestamp=moscow_time())
+    embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
+    embed.add_field(name="Канал", value=f"> {channel.name}\nID: `{channel.id}`", inline=False)
+    embed.add_field(name="Тип", value=f"> {channel_type_text(channel)}", inline=False)
+    await send_server_log(channel.guild, embed)
+
+
+@bot.event
+async def on_guild_channel_update(before: discord.abc.GuildChannel, after: discord.abc.GuildChannel) -> None:
+    changes: list[tuple[str, str]] = []
+    if before.name != after.name:
+        changes.append(("Название", f"> Было: `{before.name}`\n> Стало: `{after.name}`"))
+    if before.category_id != after.category_id:
+        old = before.category.name if before.category else "Без категории"
+        new = after.category.name if after.category else "Без категории"
+        changes.append(("Категория", f"> Было: `{old}`\n> Стало: `{new}`"))
+    if before.position != after.position:
+        changes.append(("Позиция", f"> Было: `{before.position}`\n> Стало: `{after.position}`"))
+    if hasattr(before, "topic") and getattr(before, "topic", None) != getattr(after, "topic", None):
+        changes.append(("Описание", f"> Было: {limited_text(getattr(before, 'topic', None))}\n> Стало: {limited_text(getattr(after, 'topic', None))}"))
+    if hasattr(before, "slowmode_delay") and getattr(before, "slowmode_delay", 0) != getattr(after, "slowmode_delay", 0):
+        changes.append(("Медленный режим", f"> Было: `{getattr(before, 'slowmode_delay', 0)} сек.`\n> Стало: `{getattr(after, 'slowmode_delay', 0)} сек.`"))
+    if hasattr(before, "nsfw") and getattr(before, "nsfw", False) != getattr(after, "nsfw", False):
+        changes.append(("NSFW", f"> Было: `{yes_no(getattr(before, 'nsfw', False))}`\n> Стало: `{yes_no(getattr(after, 'nsfw', False))}`"))
+    if hasattr(before, "bitrate") and getattr(before, "bitrate", None) != getattr(after, "bitrate", None):
+        changes.append(("Битрейт", f"> Было: `{getattr(before, 'bitrate', 0) // 1000} кбит/с`\n> Стало: `{getattr(after, 'bitrate', 0) // 1000} кбит/с`"))
+    if hasattr(before, "user_limit") and getattr(before, "user_limit", None) != getattr(after, "user_limit", None):
+        changes.append(("Лимит участников", f"> Было: `{getattr(before, 'user_limit', 0) or 'Без лимита'}`\n> Стало: `{getattr(after, 'user_limit', 0) or 'Без лимита'}`"))
+    if before.overwrites != after.overwrites:
+        changes.append(("Права канала", "> Разрешения канала были изменены."))
+    if not changes:
+        return
+    await asyncio.sleep(1)
+    actor = await audit_user_for(after.guild, discord.AuditLogAction.channel_update, after.id)
+    embed = discord.Embed(title="Изменение канала", color=COLOR, timestamp=moscow_time())
+    embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
+    embed.add_field(name="Канал", value=channel_id_text(after), inline=False)
+    for name, value in changes[:23]:
+        embed.add_field(name=name, value=value[:1024], inline=False)
+    await send_server_log(after.guild, embed)
+
+
+@bot.event
+async def on_guild_role_create(role: discord.Role) -> None:
+    await asyncio.sleep(1)
+    actor = await audit_user_for(role.guild, discord.AuditLogAction.role_create, role.id)
+    embed = discord.Embed(title="Создание роли", color=COLOR, timestamp=moscow_time())
+    embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
+    embed.add_field(name="Роль", value=role_id_text(role), inline=False)
+    embed.add_field(name="Цвет", value=f"> `{str(role.color)}`", inline=False)
+    await send_server_log(role.guild, embed)
+
+
+@bot.event
+async def on_guild_role_delete(role: discord.Role) -> None:
+    await asyncio.sleep(1)
+    actor = await audit_user_for(role.guild, discord.AuditLogAction.role_delete, role.id)
+    embed = discord.Embed(title="Удаление роли", color=COLOR, timestamp=moscow_time())
+    embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
+    embed.add_field(name="Роль", value=f"> {role.name}\nID: `{role.id}`", inline=False)
+    await send_server_log(role.guild, embed)
+
+
+@bot.event
+async def on_guild_role_update(before: discord.Role, after: discord.Role) -> None:
+    changes: list[tuple[str, str]] = []
+    if before.name != after.name:
+        changes.append(("Название", f"> Было: `{before.name}`\n> Стало: `{after.name}`"))
+    if before.color != after.color:
+        changes.append(("Цвет", f"> Было: `{before.color}`\n> Стало: `{after.color}`"))
+    if before.position != after.position:
+        changes.append(("Позиция", f"> Было: `{before.position}`\n> Стало: `{after.position}`"))
+    if before.hoist != after.hoist:
+        changes.append(("Отображать отдельно", f"> Было: `{yes_no(before.hoist)}`\n> Стало: `{yes_no(after.hoist)}`"))
+    if before.mentionable != after.mentionable:
+        changes.append(("Можно упоминать", f"> Было: `{yes_no(before.mentionable)}`\n> Стало: `{yes_no(after.mentionable)}`"))
+    if before.permissions != after.permissions:
+        added, removed = permission_changes(before.permissions, after.permissions)
+        parts = []
+        if added:
+            parts.append("> Добавлено: " + ", ".join(f"`{item}`" for item in added))
+        if removed:
+            parts.append("> Удалено: " + ", ".join(f"`{item}`" for item in removed))
+        changes.append(("Разрешения", "\n".join(parts)[:1024]))
+    if not changes:
+        return
+    await asyncio.sleep(1)
+    actor = await audit_user_for(after.guild, discord.AuditLogAction.role_update, after.id)
+    embed = discord.Embed(title="Изменение роли", color=COLOR, timestamp=moscow_time())
+    embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
+    embed.add_field(name="Роль", value=role_id_text(after), inline=False)
+    for name, value in changes[:23]:
+        embed.add_field(name=name, value=value[:1024], inline=False)
+    await send_server_log(after.guild, embed)
+
+
+async def log_member_role_changes(before: discord.Member, after: discord.Member) -> None:
+    before_ids = {role.id for role in before.roles}
+    after_ids = {role.id for role in after.roles}
+    added = [role for role in after.roles if role.id not in before_ids]
+    removed = [role for role in before.roles if role.id not in after_ids]
+    if not added and not removed:
+        return
+    await asyncio.sleep(1)
+    actor = await audit_user_for(after.guild, discord.AuditLogAction.member_role_update, after.id)
+    for role in added:
+        embed = discord.Embed(title="Выдача роли", color=COLOR, timestamp=moscow_time())
+        embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
+        embed.add_field(name="Пользователь", value=member_id_text(after), inline=False)
+        embed.add_field(name="Роль", value=role_id_text(role), inline=False)
+        await send_server_log(after.guild, embed)
+    for role in removed:
+        embed = discord.Embed(title="Снятие роли", color=COLOR, timestamp=moscow_time())
+        embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
+        embed.add_field(name="Пользователь", value=member_id_text(after), inline=False)
+        embed.add_field(name="Роль", value=role_id_text(role), inline=False)
+        await send_server_log(after.guild, embed)
+
+
+@bot.event
+async def on_voice_state_update(
+    member: discord.Member,
+    before: discord.VoiceState,
+    after: discord.VoiceState,
+) -> None:
+    if before.channel == after.channel:
+        return
+    if before.channel is None and after.channel is not None:
+        embed = discord.Embed(title="Подключение к голосовому каналу", color=COLOR, timestamp=moscow_time())
+        embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
+        embed.add_field(name="Канал", value=channel_id_text(after.channel), inline=False)
+        await send_server_log(member.guild, embed)
+        return
+    if before.channel is not None and after.channel is None:
+        embed = discord.Embed(title="Выход из голосового канала", color=COLOR, timestamp=moscow_time())
+        embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
+        embed.add_field(name="Канал", value=channel_id_text(before.channel), inline=False)
+        await send_server_log(member.guild, embed)
+        return
+
+    await asyncio.sleep(1)
+    actor = await audit_user_for(member.guild, discord.AuditLogAction.member_move, member.id)
+    if actor is None:
+        actor = member
+    embed = discord.Embed(title="Перемещение участника", color=COLOR, timestamp=moscow_time())
+    embed.add_field(name="Исполнитель", value=member_id_text(actor), inline=False)
+    embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
+    embed.add_field(name="Из канала", value=channel_id_text(before.channel), inline=False)
+    embed.add_field(name="В канал", value=channel_id_text(after.channel), inline=False)
+    await send_server_log(member.guild, embed)
+
+
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member) -> None:
+    await log_member_role_changes(before, after)
+    if before.timed_out_until != after.timed_out_until:
+        await handle_timeout_update(before, after)
 
 
 if __name__ == "__main__":
