@@ -662,7 +662,7 @@ async def clear_command(
         timestamp=moscow_time(),
     )
     log_embed.add_field(
-        name="Удалил(а)",
+        name="Исполнитель",
         value=member_id_text(moderator),
         inline=False,
     )
@@ -693,8 +693,14 @@ async def clear_command(
         guild,
         log_embed,
         MOD_LOG_CHANNEL_ID,
-        file=report_file,
     )
+
+    log_channel = await get_log_channel(guild, MOD_LOG_CHANNEL_ID)
+    if log_channel is not None:
+        try:
+            await log_channel.send(file=report_file)
+        except (discord.Forbidden, discord.HTTPException) as error:
+            print(f"Ошибка отправки отчёта /clear в канал {MOD_LOG_CHANNEL_ID}: {error}")
 
 
 @bot.tree.command(name="ban", description="Забанить пользователя")
@@ -1332,6 +1338,111 @@ def role_id_text(role: discord.Role) -> str:
     return f"{role.mention}\nID: `{role.id}`"
 
 
+async def get_fresh_role(guild: discord.Guild, role_id: int) -> discord.Role | None:
+    """Получает актуальный объект роли, чтобы Discord корректно показал упоминание."""
+    cached = guild.get_role(role_id)
+    try:
+        roles = await guild.fetch_roles()
+    except (discord.Forbidden, discord.HTTPException):
+        return cached
+    return discord.utils.get(roles, id=role_id) or cached
+
+
+def normalized_optional_text(value: str | None) -> str:
+    return (value or "").strip() or "Отсутствует"
+
+
+PERMISSION_NAMES_RU = {
+    "view_channel": "Просмотр канала",
+    "manage_channels": "Управление каналами",
+    "manage_roles": "Управление ролями",
+    "manage_webhooks": "Управление вебхуками",
+    "create_instant_invite": "Создание приглашений",
+    "send_messages": "Отправка сообщений",
+    "send_messages_in_threads": "Отправка сообщений в ветках",
+    "create_public_threads": "Создание публичных веток",
+    "create_private_threads": "Создание приватных веток",
+    "manage_threads": "Управление ветками",
+    "embed_links": "Встраивание ссылок",
+    "attach_files": "Прикрепление файлов",
+    "add_reactions": "Добавление реакций",
+    "use_external_emojis": "Использование внешних эмодзи",
+    "use_external_stickers": "Использование внешних стикеров",
+    "mention_everyone": "Упоминание @everyone, @here и всех ролей",
+    "manage_messages": "Управление сообщениями",
+    "read_message_history": "Чтение истории сообщений",
+    "send_tts_messages": "Отправка TTS-сообщений",
+    "use_application_commands": "Использование команд приложений",
+    "connect": "Подключение к голосовому каналу",
+    "speak": "Возможность говорить",
+    "stream": "Видеосвязь",
+    "use_voice_activation": "Использование режима активации по голосу",
+    "priority_speaker": "Приоритетный режим",
+    "mute_members": "Отключение микрофона участникам",
+    "deafen_members": "Отключение звука участникам",
+    "move_members": "Перемещение участников",
+    "request_to_speak": "Запрос на выступление",
+    "use_soundboard": "Использование звуковой панели",
+    "use_external_sounds": "Использование внешних звуков",
+    "send_voice_messages": "Отправка голосовых сообщений",
+}
+
+
+def permission_name_ru(name: str) -> str:
+    return PERMISSION_NAMES_RU.get(name, name.replace("_", " ").capitalize())
+
+
+def overwrite_target_text(target: discord.Role | discord.Member) -> str:
+    kind = "Роль" if isinstance(target, discord.Role) else "Пользователь"
+    return f"{kind}: {target.mention}\nID: `{target.id}`"
+
+
+def channel_overwrite_changes(
+    before: discord.abc.GuildChannel,
+    after: discord.abc.GuildChannel,
+) -> list[tuple[str, str]]:
+    changes: list[tuple[str, str]] = []
+    before_targets = {target.id: target for target in before.overwrites}
+    after_targets = {target.id: target for target in after.overwrites}
+
+    for target_id in sorted(set(before_targets) | set(after_targets)):
+        target = after_targets.get(target_id) or before_targets[target_id]
+        old = before.overwrites.get(before_targets.get(target_id), discord.PermissionOverwrite())
+        new = after.overwrites.get(after_targets.get(target_id), discord.PermissionOverwrite())
+
+        granted: list[str] = []
+        denied: list[str] = []
+        removed: list[str] = []
+
+        permission_names = {name for name, _ in old} | {name for name, _ in new}
+        for name in sorted(permission_names):
+            old_value = getattr(old, name, None)
+            new_value = getattr(new, name, None)
+            if old_value == new_value:
+                continue
+            translated = permission_name_ru(name)
+            if new_value is True:
+                granted.append(translated)
+            elif new_value is False:
+                denied.append(translated)
+            else:
+                removed.append(translated)
+
+        if not granted and not denied and not removed:
+            continue
+
+        parts = [f"> {overwrite_target_text(target)}"]
+        if granted:
+            parts.append("> **Выдано:**\n> " + ", ".join(f"`{item}`" for item in granted))
+        if denied:
+            parts.append("> **Запрещено:**\n> " + ", ".join(f"`{item}`" for item in denied))
+        if removed:
+            parts.append("> **Снято:**\n> " + ", ".join(f"`{item}`" for item in removed))
+        changes.append(("Права канала", "\n".join(parts)[:1024]))
+
+    return changes
+
+
 def channel_type_text(channel: discord.abc.GuildChannel) -> str:
     names = {
         discord.ChannelType.text: "Текстовый",
@@ -1417,8 +1528,11 @@ async def on_guild_channel_update(before: discord.abc.GuildChannel, after: disco
         changes.append(("Категория", f"> Было: `{old}`\n> Стало: `{new}`"))
     if before.position != after.position:
         changes.append(("Позиция", f"> Было: `{before.position}`\n> Стало: `{after.position}`"))
-    if hasattr(before, "topic") and getattr(before, "topic", None) != getattr(after, "topic", None):
-        changes.append(("Описание", f"> Было: {limited_text(getattr(before, 'topic', None))}\n> Стало: {limited_text(getattr(after, 'topic', None))}"))
+    if hasattr(before, "topic"):
+        old_topic = normalized_optional_text(getattr(before, "topic", None))
+        new_topic = normalized_optional_text(getattr(after, "topic", None))
+        if old_topic != new_topic:
+            changes.append(("Описание", f"> Было: `{old_topic}`\n> Стало: `{new_topic}`"))
     if hasattr(before, "slowmode_delay") and getattr(before, "slowmode_delay", 0) != getattr(after, "slowmode_delay", 0):
         changes.append(("Медленный режим", f"> Было: `{getattr(before, 'slowmode_delay', 0)} сек.`\n> Стало: `{getattr(after, 'slowmode_delay', 0)} сек.`"))
     if hasattr(before, "nsfw") and getattr(before, "nsfw", False) != getattr(after, "nsfw", False):
@@ -1428,7 +1542,7 @@ async def on_guild_channel_update(before: discord.abc.GuildChannel, after: disco
     if hasattr(before, "user_limit") and getattr(before, "user_limit", None) != getattr(after, "user_limit", None):
         changes.append(("Лимит участников", f"> Было: `{getattr(before, 'user_limit', 0) or 'Без лимита'}`\n> Стало: `{getattr(after, 'user_limit', 0) or 'Без лимита'}`"))
     if before.overwrites != after.overwrites:
-        changes.append(("Права канала", "> Разрешения канала были изменены."))
+        changes.extend(channel_overwrite_changes(before, after))
     if not changes:
         return
     await asyncio.sleep(1)
@@ -1443,12 +1557,14 @@ async def on_guild_channel_update(before: discord.abc.GuildChannel, after: disco
 
 @bot.event
 async def on_guild_role_create(role: discord.Role) -> None:
-    await asyncio.sleep(1)
+    await asyncio.sleep(1.5)
     actor = await audit_user_for(role.guild, discord.AuditLogAction.role_create, role.id)
+    fresh_role = await get_fresh_role(role.guild, role.id)
+    displayed_role = fresh_role or role
     embed = discord.Embed(title="Создание роли", color=COLOR, timestamp=moscow_time())
     embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
-    embed.add_field(name="Роль", value=role_id_text(role), inline=False)
-    embed.add_field(name="Цвет", value=f"> `{str(role.color)}`", inline=False)
+    embed.add_field(name="Роль", value=role_id_text(displayed_role), inline=False)
+    embed.add_field(name="Цвет", value=f"> `{str(displayed_role.color)}`", inline=False)
     await send_server_log(role.guild, embed)
 
 
@@ -1485,11 +1601,13 @@ async def on_guild_role_update(before: discord.Role, after: discord.Role) -> Non
         changes.append(("Разрешения", "\n".join(parts)[:1024]))
     if not changes:
         return
-    await asyncio.sleep(1)
+    await asyncio.sleep(1.5)
     actor = await audit_user_for(after.guild, discord.AuditLogAction.role_update, after.id)
+    fresh_role = await get_fresh_role(after.guild, after.id)
+    displayed_role = fresh_role or after
     embed = discord.Embed(title="Изменение роли", color=COLOR, timestamp=moscow_time())
     embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
-    embed.add_field(name="Роль", value=role_id_text(after), inline=False)
+    embed.add_field(name="Роль", value=role_id_text(displayed_role), inline=False)
     for name, value in changes[:23]:
         embed.add_field(name=name, value=value[:1024], inline=False)
     await send_server_log(after.guild, embed)
@@ -1505,10 +1623,12 @@ async def log_member_role_changes(before: discord.Member, after: discord.Member)
     await asyncio.sleep(1)
     actor = await audit_user_for(after.guild, discord.AuditLogAction.member_role_update, after.id)
     for role in added:
+        fresh_role = await get_fresh_role(after.guild, role.id)
+        displayed_role = fresh_role or role
         embed = discord.Embed(title="Выдача роли", color=COLOR, timestamp=moscow_time())
         embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
         embed.add_field(name="Пользователь", value=member_id_text(after), inline=False)
-        embed.add_field(name="Роль", value=role_id_text(role), inline=False)
+        embed.add_field(name="Роль", value=role_id_text(displayed_role), inline=False)
         await send_server_log(after.guild, embed)
     for role in removed:
         embed = discord.Embed(title="Снятие роли", color=COLOR, timestamp=moscow_time())
@@ -1524,30 +1644,157 @@ async def on_voice_state_update(
     before: discord.VoiceState,
     after: discord.VoiceState,
 ) -> None:
+    server_mute_changed = before.mute != after.mute
+    server_deaf_changed = before.deaf != after.deaf
+
+    # Серверное отключение микрофона/звука выполняется модератором.
+    # Пытаемся определить исполнителя через журнал аудита.
+    if server_mute_changed or server_deaf_changed:
+        await asyncio.sleep(1)
+        actor = await audit_user_for(
+            member.guild,
+            discord.AuditLogAction.member_update,
+            member.id,
+        )
+        actor_text = (
+            member_id_text(actor)
+            if actor is not None
+            else "Не удалось определить"
+        )
+
+        if server_mute_changed:
+            title = (
+                "Отключение микрофона на сервере"
+                if after.mute
+                else "Включение микрофона на сервере"
+            )
+            embed = discord.Embed(
+                title=title,
+                color=COLOR,
+                timestamp=moscow_time(),
+            )
+            embed.add_field(
+                name="Исполнитель",
+                value=actor_text,
+                inline=False,
+            )
+            embed.add_field(
+                name="Пользователь",
+                value=member_id_text(member),
+                inline=False,
+            )
+            if after.channel is not None:
+                embed.add_field(
+                    name="Канал",
+                    value=channel_id_text(after.channel),
+                    inline=False,
+                )
+            await send_server_log(member.guild, embed)
+
+        if server_deaf_changed:
+            title = (
+                "Отключение звука на сервере"
+                if after.deaf
+                else "Включение звука на сервере"
+            )
+            embed = discord.Embed(
+                title=title,
+                color=COLOR,
+                timestamp=moscow_time(),
+            )
+            embed.add_field(
+                name="Исполнитель",
+                value=actor_text,
+                inline=False,
+            )
+            embed.add_field(
+                name="Пользователь",
+                value=member_id_text(member),
+                inline=False,
+            )
+            if after.channel is not None:
+                embed.add_field(
+                    name="Канал",
+                    value=channel_id_text(after.channel),
+                    inline=False,
+                )
+            await send_server_log(member.guild, embed)
+
+    # Изменений голосового канала не было — после логов mute/deaf выходим.
     if before.channel == after.channel:
         return
+
     if before.channel is None and after.channel is not None:
-        embed = discord.Embed(title="Подключение к голосовому каналу", color=COLOR, timestamp=moscow_time())
-        embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
-        embed.add_field(name="Канал", value=channel_id_text(after.channel), inline=False)
+        embed = discord.Embed(
+            title="Подключение к голосовому каналу",
+            color=COLOR,
+            timestamp=moscow_time(),
+        )
+        embed.add_field(
+            name="Пользователь",
+            value=member_id_text(member),
+            inline=False,
+        )
+        embed.add_field(
+            name="Канал",
+            value=channel_id_text(after.channel),
+            inline=False,
+        )
         await send_server_log(member.guild, embed)
         return
+
     if before.channel is not None and after.channel is None:
-        embed = discord.Embed(title="Выход из голосового канала", color=COLOR, timestamp=moscow_time())
-        embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
-        embed.add_field(name="Канал", value=channel_id_text(before.channel), inline=False)
+        embed = discord.Embed(
+            title="Выход из голосового канала",
+            color=COLOR,
+            timestamp=moscow_time(),
+        )
+        embed.add_field(
+            name="Пользователь",
+            value=member_id_text(member),
+            inline=False,
+        )
+        embed.add_field(
+            name="Канал",
+            value=channel_id_text(before.channel),
+            inline=False,
+        )
         await send_server_log(member.guild, embed)
         return
 
     await asyncio.sleep(1)
-    actor = await audit_user_for(member.guild, discord.AuditLogAction.member_move, member.id)
+    actor = await audit_user_for(
+        member.guild,
+        discord.AuditLogAction.member_move,
+        member.id,
+    )
     if actor is None:
         actor = member
-    embed = discord.Embed(title="Перемещение участника", color=COLOR, timestamp=moscow_time())
-    embed.add_field(name="Исполнитель", value=member_id_text(actor), inline=False)
-    embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
-    embed.add_field(name="Из канала", value=channel_id_text(before.channel), inline=False)
-    embed.add_field(name="В канал", value=channel_id_text(after.channel), inline=False)
+    embed = discord.Embed(
+        title="Перемещение участника",
+        color=COLOR,
+        timestamp=moscow_time(),
+    )
+    embed.add_field(
+        name="Исполнитель",
+        value=member_id_text(actor),
+        inline=False,
+    )
+    embed.add_field(
+        name="Пользователь",
+        value=member_id_text(member),
+        inline=False,
+    )
+    embed.add_field(
+        name="Из канала",
+        value=channel_id_text(before.channel),
+        inline=False,
+    )
+    embed.add_field(
+        name="В канал",
+        value=channel_id_text(after.channel),
+        inline=False,
+    )
     await send_server_log(member.guild, embed)
 
 
