@@ -262,7 +262,7 @@ async def send_log_to(
     if channel is None:
         return None
     try:
-        return await channel.send(embed=embed, file=file)
+        return await channel.send(embed=embed, file=file, allowed_mentions=discord.AllowedMentions.none())
     except (discord.Forbidden, discord.HTTPException) as error:
         print(f"Ошибка отправки лога в канал {channel_id}: {error}")
         return None
@@ -729,7 +729,7 @@ async def clear_command(
     log_channel = await get_log_channel(guild, MESSAGE_LOG_CHANNEL_ID)
     if log_channel is not None:
         try:
-            await log_channel.send(file=report_file)
+            await log_channel.send(file=report_file, allowed_mentions=discord.AllowedMentions.none())
         except (discord.Forbidden, discord.HTTPException) as error:
             print(f"Ошибка отправки отчёта /clear в канал {MESSAGE_LOG_CHANNEL_ID}: {error}")
 
@@ -1700,7 +1700,7 @@ async def log_member_role_changes(before: discord.Member, after: discord.Member)
             displayed_roles.append(fresh_role or role)
 
         roles_text = "\n".join(
-            f"{role.mention}\nID: `{role.id}`"
+            f"> {role.mention}, ID: `{role.id}`"
             for role in displayed_roles
         )
         embed = discord.Embed(
@@ -1719,7 +1719,7 @@ async def log_member_role_changes(before: discord.Member, after: discord.Member)
 
     if removed:
         roles_text = "\n".join(
-            f"{role.mention}\nID: `{role.id}`"
+            f"> {role.mention}, ID: `{role.id}`"
             for role in removed
         )
         embed = discord.Embed(
