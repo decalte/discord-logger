@@ -48,8 +48,8 @@ NO_ACCESS_TITLES = {
     "ban": "Забанить пользователя",
     "unban": "Разбанить пользователя",
     "kick": "Исключить пользователя",
-    "timeout": "Выдача тайм-аута",
-    "untimeout": "Снятие тайм-аута",
+    "timeout": "Выдать тайм-аут",
+    "untimeout": "Снять тайм-аут",
     "clear": "Удалить сообщения",
 }
 
@@ -964,7 +964,7 @@ async def timeout_command(
 
     allowed, error = can_moderate_target(moderator, пользователь, guild)
     if not allowed:
-        await send_private_error(interaction, "Выдача тайм-аута", error or "Команда недоступна.")
+        await send_private_error(interaction, "Выдать тайм-аут", error or "Команда недоступна.")
         return
 
     duration = parse_duration(время)
@@ -978,7 +978,7 @@ async def timeout_command(
 
     # Ограничение Discord — не более 28 дней.
     if duration > timedelta(days=28):
-        await send_private_error(interaction, "Выдача тайм-аута", "Тайм-аут не может быть дольше 28 дней.")
+        await send_private_error(interaction, "Выдать тайм-аут", "Тайм-аут не может быть дольше 28 дней.")
         return
 
     until = datetime.now(timezone.utc) + duration
@@ -997,15 +997,15 @@ async def timeout_command(
         )
     except discord.Forbidden:
         pending_timeouts.pop(key, None)
-        await send_private_error(interaction, "Выдача тайм-аута", "У бота недостаточно прав для выдачи тайм-аута.")
+        await send_private_error(interaction, "Выдать тайм-аут", "У бота недостаточно прав для выдачи тайм-аута.")
         return
     except discord.HTTPException:
         pending_timeouts.pop(key, None)
-        await send_private_error(interaction, "Выдача тайм-аута", "Discord не смог выполнить выдачу тайм-аута.")
+        await send_private_error(interaction, "Выдать тайм-аут", "Discord не смог выполнить выдачу тайм-аута.")
         return
 
     embed = discord.Embed(
-        title="Выдача тайм-аута",
+        title="Выдать тайм-аут",
         description=(
             f"{moderator.mention}, Вы успешно **выдали** тайм-аут {пользователь.mention}!"
         ),
@@ -1038,11 +1038,11 @@ async def untimeout_command(
 
     allowed, error = can_moderate_target(moderator, пользователь, guild)
     if not allowed:
-        await send_private_error(interaction, "Снятие тайм-аута", error or "Команда недоступна.")
+        await send_private_error(interaction, "Снять тайм-аут", error or "Команда недоступна.")
         return
 
     if пользователь.timed_out_until is None:
-        await send_private_error(interaction, "Снятие тайм-аута", "У пользователя нет активного тайм-аута.")
+        await send_private_error(interaction, "Снять тайм-аут", "У пользователя нет активного тайм-аута.")
         return
 
     reason = limited_text(причина) if причина and причина.strip() else None
@@ -1060,15 +1060,15 @@ async def untimeout_command(
         )
     except discord.Forbidden:
         pending_untimeouts.pop(key, None)
-        await send_private_error(interaction, "Снятие тайм-аута", "У бота недостаточно прав для снятия тайм-аута.")
+        await send_private_error(interaction, "Снять тайм-аут", "У бота недостаточно прав для снятия тайм-аута.")
         return
     except discord.HTTPException:
         pending_untimeouts.pop(key, None)
-        await send_private_error(interaction, "Снятие тайм-аута", "Discord не смог выполнить снятие тайм-аута.")
+        await send_private_error(interaction, "Снять тайм-аут", "Discord не смог выполнить снятие тайм-аута.")
         return
 
     embed = discord.Embed(
-        title="Снятие тайм-аута",
+        title="Снять тайм-аут",
         description=(
             f"{moderator.mention}, Вы успешно **сняли** тайм-аут с {пользователь.mention}!"
         ),
