@@ -18,7 +18,7 @@ TOKEN = os.getenv("TOKEN")
 
 # Раздельные каналы логов.
 # Старые модерационные логи остаются в прежнем канале.
-SERVER_LOG_CHANNEL_ID = int(os.getenv("SERVER_LOG_CHANNEL_ID", "1531038064229748888"))
+MOD_LOG_CHANNEL_ID = int(os.getenv("MOD_LOG_CHANNEL_ID", "1531038064229748888"))
 SERVER_LOG_CHANNEL_ID = int(os.getenv("SERVER_LOG_CHANNEL_ID", "1534061310940151829"))
 MESSAGE_LOG_CHANNEL_ID = int(os.getenv("MESSAGE_LOG_CHANNEL_ID", "1534075561104642098"))
 
@@ -1176,7 +1176,7 @@ async def on_member_join(member: discord.Member) -> None:
     embed = discord.Embed(title="Вход на сервер", color=COLOR)
     embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
     embed.add_field(name="Дата и время входа", value=f"> {discord_datetime(event_time)}", inline=False)
-    await send_log(member.guild, embed)
+    await send_server_log(member.guild, embed)
 
 
 @bot.event
@@ -1210,7 +1210,7 @@ async def on_member_remove(member: discord.Member) -> None:
     embed = discord.Embed(title="Выход с сервера", color=COLOR)
     embed.add_field(name="Пользователь", value=member_id_text(member), inline=False)
     embed.add_field(name="Дата и время выхода", value=f"> {discord_datetime(event_time)}", inline=False)
-    await send_log(member.guild, embed)
+    await send_server_log(member.guild, embed)
 
 
 # -----------------------------------------------------------------------------
