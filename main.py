@@ -18,7 +18,7 @@ TOKEN = os.getenv("TOKEN")
 
 # Раздельные каналы логов.
 # Старые модерационные логи остаются в прежнем канале.
-MOD_LOG_CHANNEL_ID = int(os.getenv("MOD_LOG_CHANNEL_ID", "1531038064229748888"))
+SERVER_LOG_CHANNEL_ID = int(os.getenv("SERVER_LOG_CHANNEL_ID", "1531038064229748888"))
 SERVER_LOG_CHANNEL_ID = int(os.getenv("SERVER_LOG_CHANNEL_ID", "1534061310940151829"))
 MESSAGE_LOG_CHANNEL_ID = int(os.getenv("MESSAGE_LOG_CHANNEL_ID", "1534075561104642098"))
 
