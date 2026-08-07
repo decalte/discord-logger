@@ -1142,7 +1142,6 @@ class PrivateRoomPanelView(discord.ui.LayoutView):
             discord.ui.ActionRow(
                 PrivateRoomSettingsSelect(),
             ),
-            discord.ui.ActionRow(PrivateRoomSettingsSelect()),
             discord.ui.ActionRow(PrivateRoomMemberActionsSelect()),
             accent_color=COLOR,
         )
@@ -1191,14 +1190,15 @@ async def ensure_private_room_panel() -> None:
         if panel_message is None:
             await channel.send(view=panel_view)
         else:
-            # При переходе с обычного Embed/View на LayoutView discord.py требует
-            # явно убрать прежний content/embed/attachments.
-            await panel_message.edit(
-                content=None,
-                embed=None,
-                attachments=[],
-                view=panel_view,
-            )
+            try:
+                await panel_message.edit(
+                    content=None,
+                    embed=None,
+                    attachments=[],
+                    view=panel_view,
+                )
+            except (discord.HTTPException, ValueError):
+                await channel.send(view=panel_view)
     except (discord.Forbidden, discord.HTTPException, ValueError) as error:
         print(f"Не удалось создать/обновить панель приватных комнат: {error}")
 
