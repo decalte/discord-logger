@@ -970,16 +970,15 @@ class PrivateRoomMemberActionsView(discord.ui.View):
         self.add_item(PrivateRoomMemberActionsSelect())
 
 
-class PrivateRoomPanelView(discord.ui.View):
+class PrivateRoomToggleLockButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(timeout=None)
-        # Оба списка находятся прямо под тем же embed-сообщением. При нажатии
-        # Discord открывает нативный список вариантов, без отдельного служебного embed.
-        self.add_item(PrivateRoomSettingsSelect())
-        self.add_item(PrivateRoomMemberActionsSelect())
+        super().__init__(
+            label="Открыть/закрыть вход",
+            style=discord.ButtonStyle.secondary,
+            custom_id="private_room:toggle_lock",
+        )
 
-    @discord.ui.button(label="Открыть/закрыть вход", style=discord.ButtonStyle.secondary, custom_id="private_room:toggle_lock", row=0)
-    async def toggle_lock(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def callback(self, interaction: discord.Interaction) -> None:
         result = await require_private_room(interaction, "Открыть/Закрыть комнату")
         if result is None:
             return
@@ -989,34 +988,100 @@ class PrivateRoomPanelView(discord.ui.View):
         try:
             overwrite = channel.overwrites_for(channel.guild.default_role)
             overwrite.connect = False if locked else None
-            await channel.set_permissions(channel.guild.default_role, overwrite=overwrite, reason=f"Владелец комнаты: {member}")
+            await channel.set_permissions(
+                channel.guild.default_role,
+                overwrite=overwrite,
+                reason=f"Владелец комнаты: {member}",
+            )
             update_private_room_settings(member.guild.id, member.id, locked=locked)
         except (discord.Forbidden, discord.HTTPException):
-            await send_private_room_reply(interaction, "Открыть/Закрыть комнату", f"{member.mention}, не удалось **изменить** доступ к комнате.")
+            await send_private_room_reply(
+                interaction,
+                "Открыть/Закрыть комнату",
+                f"{member.mention}, не удалось **изменить** доступ к комнате.",
+            )
             return
         verb = "закрыли" if locked else "открыли"
-        await send_private_room_reply(interaction, "Открыть/Закрыть комнату", f"{member.mention}, Вы успешно **{verb}** свою комнату.")
+        await send_private_room_reply(
+            interaction,
+            "Открыть/Закрыть комнату",
+            f"{member.mention}, Вы успешно **{verb}** свою комнату.",
+        )
 
-    @discord.ui.button(label="Дать доступ", style=discord.ButtonStyle.success, custom_id="private_room:allow", row=1)
-    async def allow(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+
+class PrivateRoomAllowButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Дать доступ",
+            style=discord.ButtonStyle.success,
+            custom_id="private_room:allow",
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
         if await require_private_room(interaction, "Дать доступ") is not None:
-            await send_private_room_reply(interaction, "Дать доступ", "Выберите пользователя.", view=PrivateRoomUserActionView("allow", "Дать доступ"))
+            await send_private_room_reply(
+                interaction,
+                "Дать доступ",
+                "Выберите пользователя.",
+                view=PrivateRoomUserActionView("allow", "Дать доступ"),
+            )
 
-    @discord.ui.button(label="Забрать доступ", style=discord.ButtonStyle.danger, custom_id="private_room:deny", row=1)
-    async def deny(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+
+class PrivateRoomDenyButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Забрать доступ",
+            style=discord.ButtonStyle.danger,
+            custom_id="private_room:deny",
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
         if await require_private_room(interaction, "Забрать доступ") is not None:
-            await send_private_room_reply(interaction, "Забрать доступ", "Выберите пользователя.", view=PrivateRoomUserActionView("deny", "Забрать доступ"))
+            await send_private_room_reply(
+                interaction,
+                "Забрать доступ",
+                "Выберите пользователя.",
+                view=PrivateRoomUserActionView("deny", "Забрать доступ"),
+            )
 
 
-def private_room_panel_embed() -> discord.Embed:
-    return discord.Embed(
-        title="Управление приватной комнатой",
-        description=(
-            "Здесь Вы можете управлять своей приватной комнатой.\n"
-            "Для использования панели необходимо создать свою комнату."
-        ),
-        color=COLOR,
-    )
+class PrivateRoomPanelView(discord.ui.LayoutView):
+    """Постоянная панель приватных комнат на Discord Components V2."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(
+                "-# Приватные комнаты\n"
+                "## Управление своей комнатой\n"
+                "Используйте кнопки ниже, чтобы управлять своей приватной комнатой."
+            ),
+            discord.ui.Separator(),
+            discord.ui.ActionRow(PrivateRoomToggleLockButton()),
+            discord.ui.ActionRow(PrivateRoomAllowButton(), PrivateRoomDenyButton()),
+            discord.ui.ActionRow(PrivateRoomSettingsSelect()),
+            discord.ui.ActionRow(PrivateRoomMemberActionsSelect()),
+            accent_color=COLOR,
+        )
+        self.add_item(container)
+
+
+def message_has_private_room_panel(message: discord.Message) -> bool:
+    """Находит как старую embed-панель, так и новую панель Components V2."""
+    if message.embeds and message.embeds[0].title == "Управление приватной комнатой":
+        return True
+
+    def has_private_id(component: Any) -> bool:
+        custom_id = getattr(component, "custom_id", None)
+        if isinstance(custom_id, str) and custom_id.startswith("private_room:"):
+            return True
+        for child in getattr(component, "children", []) or []:
+            if has_private_id(child):
+                return True
+        return False
+
+    return any(has_private_id(component) for component in message.components)
 
 
 async def ensure_private_room_panel() -> None:
@@ -1034,16 +1099,25 @@ async def ensure_private_room_panel() -> None:
     panel_message: discord.Message | None = None
     try:
         async for message in channel.history(limit=50):
-            if message.author.id != bot.user.id or not message.embeds:
+            if bot.user is None or message.author.id != bot.user.id:
                 continue
-            if message.embeds[0].title == "Управление приватной комнатой":
+            if message_has_private_room_panel(message):
                 panel_message = message
                 break
+
+        panel_view = PrivateRoomPanelView()
         if panel_message is None:
-            await channel.send(embed=private_room_panel_embed(), view=PrivateRoomPanelView())
+            await channel.send(view=panel_view)
         else:
-            await panel_message.edit(embed=private_room_panel_embed(), view=PrivateRoomPanelView())
-    except (discord.Forbidden, discord.HTTPException) as error:
+            # При переходе с обычного Embed/View на LayoutView discord.py требует
+            # явно убрать прежний content/embed/attachments.
+            await panel_message.edit(
+                content=None,
+                embed=None,
+                attachments=[],
+                view=panel_view,
+            )
+    except (discord.Forbidden, discord.HTTPException, ValueError) as error:
         print(f"Не удалось создать/обновить панель приватных комнат: {error}")
 
 # -----------------------------------------------------------------------------
