@@ -1001,9 +1001,24 @@ class PrivateRoomMemberActionsSelect(discord.ui.Select):
         }
         action = self.values[0]
         title = mapping[action]
+
+        descriptions = {
+            "allow": "Выберите пользователя, которому хотите дать доступ к комнате.",
+            "deny": "Выберите пользователя, у которого хотите забрать доступ к комнате.",
+            "kick": "Выберите пользователя, которого хотите выгнать из комнаты.",
+            "mute": "Выберите пользователя, которому хотите запретить говорить.",
+            "unmute": "Выберите пользователя, которому хотите разрешить говорить.",
+        }
+
         if await require_private_room(interaction, title) is None:
             return
-        await send_private_room_reply(interaction, title, "Выберите пользователя.", view=PrivateRoomUserActionView(action, title))
+
+        await send_private_room_reply(
+            interaction,
+            title,
+            descriptions.get(action, "Выберите пользователя."),
+            view=PrivateRoomUserActionView(action, title)
+        )
 
 
 class PrivateRoomMemberActionsView(discord.ui.View):
