@@ -130,6 +130,12 @@ def channel_id_text(channel: discord.abc.GuildChannel | discord.Thread) -> str:
     return f"{channel.mention}\nID: `{channel.id}`"
 
 
+def category_id_text(category: discord.CategoryChannel) -> str:
+    # Категории не оформляем через mention: на некоторых клиентах Discord это
+    # визуально выглядит как двойной символ #.
+    return f"> {category.name}\nID: `{category.id}`"
+
+
 def limited_text(text: str | None, fallback: str = "Отсутствует") -> str:
     value = (text or "").strip() or fallback
     return value[:997] + "..." if len(value) > 1000 else value
@@ -651,7 +657,7 @@ async def delete_private_room(channel: discord.VoiceChannel) -> None:
         private_room_channels.pop((channel.guild.id, owner_id), None)
         set_active_private_room(channel.guild.id, owner_id, None)
         try:
-            await channel.delete(reason="Владелец вышел или приватная комната опустела")
+            await channel.delete(reason="Приватная комната опустела")
         except discord.NotFound:
             pass
         except (discord.Forbidden, discord.HTTPException) as error:
@@ -672,23 +678,19 @@ async def handle_private_room_voice_update(
     if member.bot or before.channel == after.channel:
         return
 
-    # Сначала обрабатываем выход из старой приватной комнаты. Это важно, если
-    # владелец сразу перешёл из своей комнаты в канал создания новой.
+    # Приватная комната удаляется только тогда, когда в ней больше никого нет.
+    # Если владелец вышел, но внутри остались участники, комната продолжает
+    # существовать и остаётся закреплённой за тем же владельцем.
     if isinstance(before.channel, discord.VoiceChannel) and before.channel.id in private_room_owners:
-        owner_id = private_room_owners.get(before.channel.id)
-        if owner_id == member.id:
-            await asyncio.sleep(0.3)
-            channel = member.guild.get_channel(before.channel.id)
-            if isinstance(channel, discord.VoiceChannel):
-                await delete_private_room(channel)
-        else:
-            await asyncio.sleep(0.3)
-            channel = member.guild.get_channel(before.channel.id)
-            if isinstance(channel, discord.VoiceChannel) and not channel.members:
-                await delete_private_room(channel)
+        await asyncio.sleep(0.3)
+        channel = member.guild.get_channel(before.channel.id)
+        if isinstance(channel, discord.VoiceChannel) and not channel.members:
+            await delete_private_room(channel)
 
-    # Пользователь зашёл в канал создания — создаём новую комнату уже после
-    # удаления предыдущей. Все сохранённые настройки применятся автоматически.
+    # Пользователь зашёл в канал создания. Если его прежняя комната ещё существует
+    # (например, внутри остались люди), create_private_room вернёт его туда. Если
+    # старая комната уже опустела и была удалена, создастся новая с сохранёнными
+    # настройками пользователя.
     if isinstance(after.channel, discord.VoiceChannel) and after.channel.id == PRIVATE_ROOM_CREATE_CHANNEL_ID:
         await create_private_room(member, after.channel)
 
@@ -717,14 +719,15 @@ async def restore_private_room_indexes() -> None:
                 continue
             channel = guild.get_channel(channel_id)
             if isinstance(channel, discord.VoiceChannel):
-                owner = guild.get_member(owner_id)
-                if owner is not None and owner in channel.members:
+                # Комната считается активной, пока в ней есть хотя бы один человек.
+                # Владелец не обязан находиться внутри комнаты в момент перезапуска.
+                if channel.members:
                     private_room_owners[channel.id] = owner_id
                     private_room_channels[(guild.id, owner_id)] = channel.id
                 else:
                     raw.pop("active_channel_id", None)
                     try:
-                        await channel.delete(reason="Очистка неактивной приватной комнаты после перезапуска")
+                        await channel.delete(reason="Очистка пустой приватной комнаты после перезапуска")
                     except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                         pass
             else:
@@ -886,7 +889,12 @@ class PrivateRoomSettingsSelect(discord.ui.Select):
             discord.SelectOption(label="Скрыть / показать комнату", value="visibility"),
             discord.SelectOption(label="Передать владельца", value="transfer"),
         ]
-        super().__init__(placeholder="Выберите настройку", options=options)
+        super().__init__(
+            placeholder="Настройки комнаты",
+            options=options,
+            custom_id="private_room:settings_select",
+            row=2,
+        )
 
     async def callback(self, interaction: discord.Interaction) -> None:
         value = self.values[0]
@@ -934,7 +942,12 @@ class PrivateRoomMemberActionsSelect(discord.ui.Select):
             discord.SelectOption(label="Разрешить говорить", value="unmute"),
             discord.SelectOption(label="Запретить говорить", value="mute"),
         ]
-        super().__init__(placeholder="Выберите действие", options=options)
+        super().__init__(
+            placeholder="Действия с пользователями",
+            options=options,
+            custom_id="private_room:members_select",
+            row=3,
+        )
 
     async def callback(self, interaction: discord.Interaction) -> None:
         mapping = {
@@ -960,8 +973,12 @@ class PrivateRoomMemberActionsView(discord.ui.View):
 class PrivateRoomPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
+        # Оба списка находятся прямо под тем же embed-сообщением. При нажатии
+        # Discord открывает нативный список вариантов, без отдельного служебного embed.
+        self.add_item(PrivateRoomSettingsSelect())
+        self.add_item(PrivateRoomMemberActionsSelect())
 
-    @discord.ui.button(label="Открыть / закрыть вход", style=discord.ButtonStyle.secondary, custom_id="private_room:toggle_lock", row=0)
+    @discord.ui.button(label="Открыть/закрыть вход", style=discord.ButtonStyle.secondary, custom_id="private_room:toggle_lock", row=0)
     async def toggle_lock(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         result = await require_private_room(interaction, "Открыть/Закрыть комнату")
         if result is None:
@@ -989,16 +1006,6 @@ class PrivateRoomPanelView(discord.ui.View):
     async def deny(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if await require_private_room(interaction, "Забрать доступ") is not None:
             await send_private_room_reply(interaction, "Забрать доступ", "Выберите пользователя.", view=PrivateRoomUserActionView("deny", "Забрать доступ"))
-
-    @discord.ui.button(label="Настройки комнаты", style=discord.ButtonStyle.secondary, custom_id="private_room:settings", row=2)
-    async def settings(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if await require_private_room(interaction, "Настройки комнаты") is not None:
-            await send_private_room_reply(interaction, "Настройки комнаты", "Выберите нужный пункт.", view=PrivateRoomSettingsView())
-
-    @discord.ui.button(label="Действия с пользователями", style=discord.ButtonStyle.secondary, custom_id="private_room:members", row=3)
-    async def members(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if await require_private_room(interaction, "Действия с пользователями") is not None:
-            await send_private_room_reply(interaction, "Действия с пользователями", "Выберите нужное действие.", view=PrivateRoomMemberActionsView())
 
 
 def private_room_panel_embed() -> discord.Embed:
@@ -2223,6 +2230,8 @@ def deleted_channel_text(channel: discord.abc.GuildChannel) -> str:
         discord.ChannelType.forum,
     }
     prefix = "#" if channel.type in prefix_types else ""
+    if channel.type == discord.ChannelType.category:
+        return f"> {channel.name}\nID: `{channel.id}`"
     return f"{prefix}{channel.name}\nID: `{channel.id}`"
 
 
@@ -2290,7 +2299,7 @@ async def on_guild_channel_create(channel: discord.abc.GuildChannel) -> None:
         channel_value = channel_id_text(channel)
     embed.add_field(name=channel_entity_name(channel), value=channel_value, inline=False)
     if channel.category:
-        embed.add_field(name="Категория", value=channel_id_text(channel.category), inline=False)
+        embed.add_field(name="Категория", value=category_id_text(channel.category), inline=False)
     await send_server_log(channel.guild, embed)
 
 
@@ -2301,6 +2310,8 @@ async def on_guild_channel_delete(channel: discord.abc.GuildChannel) -> None:
     embed = discord.Embed(title=channel_event_title("Удаление", channel), color=COLOR, timestamp=moscow_time())
     embed.add_field(name="Исполнитель", value=member_id_text(actor) if actor else "Не удалось определить", inline=False)
     embed.add_field(name=channel_entity_name(channel), value=deleted_channel_text(channel), inline=False)
+    if channel.type != discord.ChannelType.category and channel.category is not None:
+        embed.add_field(name="Категория", value=category_id_text(channel.category), inline=False)
     await send_server_log(channel.guild, embed)
 
 
