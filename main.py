@@ -886,7 +886,6 @@ class PrivateRoomSettingsSelect(discord.ui.Select):
         options = [
             discord.SelectOption(label="Изменить название", value="rename"),
             discord.SelectOption(label="Лимит участников", value="limit"),
-            discord.SelectOption(label="Скрыть / показать комнату", value="visibility"),
             discord.SelectOption(label="Передать владельца", value="transfer"),
         ]
         super().__init__(
@@ -904,23 +903,6 @@ class PrivateRoomSettingsSelect(discord.ui.Select):
         elif value == "limit":
             if await require_private_room(interaction, "Изменить лимит участников") is not None:
                 await interaction.response.send_modal(PrivateRoomLimitModal())
-        elif value == "visibility":
-            result = await require_private_room(interaction, "Скрыть/Показать комнату")
-            if result is None:
-                return
-            member, channel = result
-            settings = get_private_room_settings(member.guild.id, member.id)
-            hidden = not bool(settings.get("hidden"))
-            try:
-                overwrite = channel.overwrites_for(channel.guild.default_role)
-                overwrite.view_channel = False if hidden else None
-                await channel.set_permissions(channel.guild.default_role, overwrite=overwrite, reason=f"Владелец комнаты: {member}")
-                update_private_room_settings(member.guild.id, member.id, hidden=hidden)
-            except (discord.Forbidden, discord.HTTPException):
-                await send_private_room_reply(interaction, "Скрыть/Показать комнату", f"{member.mention}, не удалось **изменить** видимость комнаты.")
-                return
-            verb = "скрыли" if hidden else "показали"
-            await send_private_room_reply(interaction, "Скрыть/Показать комнату", f"{member.mention}, Вы успешно **{verb}** свою комнату.")
         elif value == "transfer":
             result = await require_private_room(interaction, "Передать владельца")
             if result is not None:
@@ -943,7 +925,7 @@ class PrivateRoomMemberActionsSelect(discord.ui.Select):
             discord.SelectOption(label="Запретить говорить", value="mute"),
         ]
         super().__init__(
-            placeholder="Действия с пользователями",
+            placeholder="Управление участниками",
             options=options,
             custom_id="private_room:members_select",
             row=3,
@@ -1009,6 +991,45 @@ class PrivateRoomToggleLockButton(discord.ui.Button):
         )
 
 
+class PrivateRoomToggleVisibilityButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Скрыть/показать",
+            style=discord.ButtonStyle.secondary,
+            custom_id="private_room:toggle_visibility",
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        result = await require_private_room(interaction, "Скрыть/Показать комнату")
+        if result is None:
+            return
+        member, channel = result
+        settings = get_private_room_settings(member.guild.id, member.id)
+        hidden = not bool(settings.get("hidden"))
+        try:
+            overwrite = channel.overwrites_for(channel.guild.default_role)
+            overwrite.view_channel = False if hidden else None
+            await channel.set_permissions(
+                channel.guild.default_role,
+                overwrite=overwrite,
+                reason=f"Владелец комнаты: {member}",
+            )
+            update_private_room_settings(member.guild.id, member.id, hidden=hidden)
+        except (discord.Forbidden, discord.HTTPException):
+            await send_private_room_reply(
+                interaction,
+                "Скрыть/Показать комнату",
+                f"{member.mention}, не удалось **изменить** видимость комнаты.",
+            )
+            return
+        verb = "скрыли" if hidden else "показали"
+        await send_private_room_reply(
+            interaction,
+            "Скрыть/Показать комнату",
+            f"{member.mention}, Вы успешно **{verb}** свою комнату.",
+        )
+
+
 class PrivateRoomAllowButton(discord.ui.Button):
     def __init__(self):
         super().__init__(
@@ -1053,13 +1074,19 @@ class PrivateRoomPanelView(discord.ui.LayoutView):
 
         container = discord.ui.Container(
             discord.ui.TextDisplay(
-                "# Управление приватной комнатой\n"
+                "**Управление приватной комнатой**\n"
                 "Здесь Вы можете управлять своей приватной комнатой.\n"
                 "Для использования кнопок необходимо создать свою комнату."
             ),
             discord.ui.Separator(),
-            discord.ui.ActionRow(PrivateRoomToggleLockButton()),
-            discord.ui.ActionRow(PrivateRoomAllowButton(), PrivateRoomDenyButton()),
+            discord.ui.ActionRow(
+                PrivateRoomToggleLockButton(),
+                PrivateRoomToggleVisibilityButton(),
+            ),
+            discord.ui.ActionRow(
+                PrivateRoomAllowButton(),
+                PrivateRoomDenyButton(),
+            ),
             discord.ui.ActionRow(PrivateRoomSettingsSelect()),
             discord.ui.ActionRow(PrivateRoomMemberActionsSelect()),
             accent_color=COLOR,
