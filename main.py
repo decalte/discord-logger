@@ -1074,7 +1074,7 @@ class PrivateRoomPanelView(discord.ui.LayoutView):
 
         container = discord.ui.Container(
             discord.ui.TextDisplay(
-                "**Управление приватной комнатой**\n"
+                "# Управление приватной комнатой**\n\n"
                 "Здесь Вы можете управлять своей приватной комнатой.\n"
                 "Для использования кнопок необходимо создать свою комнату."
             ),
