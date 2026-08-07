@@ -131,9 +131,9 @@ def channel_id_text(channel: discord.abc.GuildChannel | discord.Thread) -> str:
 
 
 def category_id_text(category: discord.CategoryChannel) -> str:
-    # Категории не оформляем через mention: на некоторых клиентах Discord это
-    # визуально выглядит как двойной символ #.
-    return f"> {category.name}\nID: `{category.id}`"
+    # В логах создания/удаления каналов для категории показываем только название,
+    # без ID категории.
+    return f"> {category.name}"
 
 
 def limited_text(text: str | None, fallback: str = "Отсутствует") -> str:
@@ -886,6 +886,7 @@ class PrivateRoomSettingsSelect(discord.ui.Select):
         options = [
             discord.SelectOption(label="Изменить название", value="rename"),
             discord.SelectOption(label="Лимит участников", value="limit"),
+            discord.SelectOption(label="Скрыть/показать", value="visibility"),
             discord.SelectOption(label="Передать владельца", value="transfer"),
         ]
         super().__init__(
@@ -903,6 +904,35 @@ class PrivateRoomSettingsSelect(discord.ui.Select):
         elif value == "limit":
             if await require_private_room(interaction, "Изменить лимит участников") is not None:
                 await interaction.response.send_modal(PrivateRoomLimitModal())
+        elif value == "visibility":
+            result = await require_private_room(interaction, "Скрыть/Показать комнату")
+            if result is None:
+                return
+            member, channel = result
+            settings = get_private_room_settings(member.guild.id, member.id)
+            hidden = not bool(settings.get("hidden"))
+            try:
+                overwrite = channel.overwrites_for(channel.guild.default_role)
+                overwrite.view_channel = False if hidden else None
+                await channel.set_permissions(
+                    channel.guild.default_role,
+                    overwrite=overwrite,
+                    reason=f"Владелец комнаты: {member}",
+                )
+                update_private_room_settings(member.guild.id, member.id, hidden=hidden)
+            except (discord.Forbidden, discord.HTTPException):
+                await send_private_room_reply(
+                    interaction,
+                    "Скрыть/Показать комнату",
+                    f"{member.mention}, не удалось **изменить** видимость комнаты.",
+                )
+                return
+            verb = "скрыли" if hidden else "показали"
+            await send_private_room_reply(
+                interaction,
+                "Скрыть/Показать комнату",
+                f"{member.mention}, Вы успешно **{verb}** свою комнату.",
+            )
         elif value == "transfer":
             result = await require_private_room(interaction, "Передать владельца")
             if result is not None:
@@ -925,7 +955,7 @@ class PrivateRoomMemberActionsSelect(discord.ui.Select):
             discord.SelectOption(label="Запретить говорить", value="mute"),
         ]
         super().__init__(
-            placeholder="Управление участниками",
+            placeholder="Действия с участниками",
             options=options,
             custom_id="private_room:members_select",
             row=3,
@@ -1074,14 +1104,13 @@ class PrivateRoomPanelView(discord.ui.LayoutView):
 
         container = discord.ui.Container(
             discord.ui.TextDisplay(
-                "## Управление приватной комнатой\n\n"
+                "**Управление приватной комнатой**\n"
                 "Здесь Вы можете управлять своей приватной комнатой.\n"
                 "Для использования кнопок необходимо создать свою комнату."
             ),
             discord.ui.Separator(),
             discord.ui.ActionRow(
                 PrivateRoomToggleLockButton(),
-                PrivateRoomToggleVisibilityButton(),
             ),
             discord.ui.ActionRow(
                 PrivateRoomAllowButton(),
