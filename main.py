@@ -888,7 +888,7 @@ class PrivateRoomSettingsSelect(discord.ui.Select):
             discord.SelectOption(label="Лимит участников", value="limit"),
             discord.SelectOption(label="Открыть/закрыть", value="lock"),
             discord.SelectOption(label="Скрыть/показать", value="visibility"),
-            discord.SelectOption(label="Передать владельца", value="transfer"),
+            discord.SelectOption(label="Передать владение", value="transfer"),
         ]
         super().__init__(
             placeholder="Настройки комнаты",
@@ -964,9 +964,9 @@ class PrivateRoomSettingsSelect(discord.ui.Select):
                 f"{member.mention}, Вы успешно **{verb}** свою комнату.",
             )
         elif value == "transfer":
-            result = await require_private_room(interaction, "Передать владельца")
+            result = await require_private_room(interaction, "Передать владение")
             if result is not None:
-                await send_private_room_reply(interaction, "Передать владельца", "Выберите пользователя, которому хотите передать комнату.", view=PrivateRoomUserActionView("transfer", "Передать владельца"))
+                await send_private_room_reply(interaction, "Передать владение", "Выберите пользователя, которому хотите передать комнату.", view=PrivateRoomUserActionView("transfer", "Передать владение"))
 
 
 class PrivateRoomSettingsView(discord.ui.View):
