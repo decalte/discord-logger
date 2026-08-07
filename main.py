@@ -985,7 +985,7 @@ class PrivateRoomMemberActionsView(discord.ui.View):
 class PrivateRoomToggleLockButton(discord.ui.Button):
     def __init__(self):
         super().__init__(
-            label="Открыть/закрыть вход",
+            label="Открыть/закрыть",
             style=discord.ButtonStyle.secondary,
             custom_id="private_room:toggle_lock",
         )
