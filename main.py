@@ -1,4 +1,4 @@
-
+from __future__ import annotations
 
 import asyncio
 import json
@@ -998,12 +998,13 @@ async def finish_duel(channel: discord.TextChannel, *, loser_id: int | None = No
         discord.ui.TextDisplay(result),
         discord.ui.Separator(),
     ]
-    for member_id, name in display_order:
+    for index, (member_id, name) in enumerate(display_order):
         result_items.append(
             discord.ui.TextDisplay(f"**{name}**\n{duel_stats_text(duel, member_id)}")
         )
-        # Native Discord divider after each participant's final statistic.
-        result_items.append(discord.ui.Separator())
+        # Divider only between participants; no trailing divider at the end.
+        if index == 0:
+            result_items.append(discord.ui.Separator())
     if reason and duel.get("mode") == "endurance":
         result_items.append(discord.ui.TextDisplay('**Причина завершения:** ' + reason))
 
@@ -1247,14 +1248,14 @@ class DuelChallengeView(discord.ui.View):
 
         if interaction.user.id == self.challenger_id:
             await interaction.response.send_message(
-                embed=duel_embed("Не удалось начать дуэль", "Вы не можете **принять** собственный вызов."),
+                view=duel_layout("Не удалось начать дуэль", "Вы не можете принять собственный вызов."),
                 ephemeral=True,
             )
             return
 
         if self.opponent_id is not None and interaction.user.id != self.opponent_id:
             await interaction.response.send_message(
-                embed=duel_embed("Не удалось начать дуэль", "Этот вызов предназначен другому участнику."),
+                view=duel_layout("Не удалось начать дуэль", "Этот вызов предназначен другому участнику."),
                 ephemeral=True,
             )
             return
@@ -1262,7 +1263,7 @@ class DuelChallengeView(discord.ui.View):
         opponent = interaction.user
         if user_in_active_duel(challenger.id) or user_in_active_duel(opponent.id):
             await interaction.response.send_message(
-                embed=duel_embed("Не удалось начать дуэль", "Один из участников уже находится в активной дуэли."),
+                view=duel_layout("Не удалось начать дуэль", "Один из участников уже находится в активной дуэли."),
                 ephemeral=True,
             )
             return
@@ -1357,8 +1358,9 @@ class DuelChallengeView(discord.ui.View):
             pass
 
 
-@bot.tree.command(name="duel", description="Начать дуэль с участником")
-@discord.app_commands.describe(opponent="Участник, с которым будет дуэль")
+@bot.tree.command(name="duel", description="Бросить вызов на дуэль")
+@discord.app_commands.rename(opponent="оппонент")
+@discord.app_commands.describe(opponent="Оппонент")
 async def duel_command(interaction: discord.Interaction, opponent: discord.Member | None = None) -> None:
     if interaction.guild is None or not isinstance(interaction.user, discord.Member):
         await interaction.response.send_message("Команда доступна только на сервере.", ephemeral=True)
@@ -1368,21 +1370,21 @@ async def duel_command(interaction: discord.Interaction, opponent: discord.Membe
 
     if opponent is not None and opponent.id == challenger.id:
         await interaction.response.send_message(
-            embed=duel_embed("Не удалось начать дуэль", "Вы не можете **начать** дуэль с самим собой."),
+            view=duel_layout("Не удалось начать дуэль", "Вы не можете начать дуэль с самим собой."),
             ephemeral=True,
         )
         return
 
     if opponent is not None and opponent.bot:
         await interaction.response.send_message(
-            embed=duel_embed("Не удалось начать дуэль", "Вы не можете **начать** дуэль с ботом."),
+            view=duel_layout("Не удалось начать дуэль", "Вы не можете начать дуэль с ботом."),
             ephemeral=True,
         )
         return
 
     if user_busy_with_duel(challenger.id) or (opponent is not None and user_busy_with_duel(opponent.id)):
         await interaction.response.send_message(
-            embed=duel_embed("Не удалось начать дуэль", "Один из участников уже находится в активной дуэли."),
+            view=duel_layout("Не удалось начать дуэль", "Один из участников уже находится в активной дуэли."),
             ephemeral=True,
         )
         return
