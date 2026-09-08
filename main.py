@@ -836,7 +836,7 @@ def duel_layout(title: str, description: str, *controls: discord.ui.Item[Any]) -
     """Сообщение дуэли с настоящим системным Separator Discord Components V2."""
     view = discord.ui.LayoutView(timeout=None)
     items: list[Any] = [
-        discord.ui.TextDisplay(f"## {title}"),
+        discord.ui.TextDisplay(f"### {title}"),
         discord.ui.Separator(),
         discord.ui.TextDisplay(description),
     ]
@@ -880,6 +880,56 @@ def duel_stats_text(duel: dict[str, Any], member_id: int) -> str:
         f"Макс. сообщений подряд: **{stats['max_streak']}**\n"
         f"Макс. символов в сообщении: **{stats['max_message_chars']}**"
     )
+
+
+def duel_finished_public_layout(
+    duel: dict[str, Any], winner_id: int | None,
+) -> discord.ui.LayoutView:
+    """Public result: winner statistics, or both participants in a draw."""
+    items: list[Any] = [
+        discord.ui.TextDisplay("### Дуэль окончена"),
+        discord.ui.Separator(),
+    ]
+    if winner_id is not None:
+        items.append(discord.ui.TextDisplay(
+            f"**Победитель:** <@{winner_id}>"
+        ))
+        items.append(discord.ui.Separator())
+        items.append(discord.ui.TextDisplay(duel_stats_text(duel, winner_id)))
+        items.append(discord.ui.Separator())
+    else:
+        items.append(discord.ui.TextDisplay("**Ничья.**"))
+        for member_id in duel["players"]:
+            items.append(discord.ui.TextDisplay(
+                f"**<@{member_id}>**\n" + duel_stats_text(duel, member_id)
+            ))
+            items.append(discord.ui.Separator())
+    view = discord.ui.LayoutView(timeout=None)
+    view.add_item(discord.ui.Container(*items, accent_color=COLOR))
+    return view
+
+
+async def update_duel_public_message(
+    duel: dict[str, Any], winner_id: int | None,
+) -> None:
+    """Edit the original public challenge using the bot, not an expiring token."""
+    channel_id = duel.get("announcement_channel_id")
+    message_id = duel.get("announcement_message_id")
+    if channel_id is None or message_id is None:
+        return
+    try:
+        source_channel = bot.get_partial_messageable(int(channel_id))
+        message = source_channel.get_partial_message(int(message_id))
+        await message.edit(
+            content=None,
+            embeds=[],
+            attachments=[],
+            view=duel_finished_public_layout(duel, winner_id),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException) as error:
+        # A deleted/inaccessible public message must not stop channel cleanup.
+        print(f"Could not update public duel message {message_id}: {error}")
 
 
 async def delete_duel_channel_later(channel: discord.TextChannel) -> None:
@@ -940,7 +990,7 @@ async def finish_duel(channel: discord.TextChannel, *, loser_id: int | None = No
         display_order = ((first_id, first_name), (second_id, second_name))
 
     result_items: list[Any] = [
-        discord.ui.TextDisplay('## Результаты дуэли'),
+        discord.ui.TextDisplay('### Результаты дуэли'),
         discord.ui.Separator(),
         discord.ui.TextDisplay(result),
     ]
@@ -956,31 +1006,6 @@ async def finish_duel(channel: discord.TextChannel, *, loser_id: int | None = No
     result_view = discord.ui.LayoutView(timeout=None)
     result_view.add_item(discord.ui.Container(*result_items, accent_color=COLOR))
 
-    # Обновляем исходное сообщение вызова после завершения дуэли.
-    challenge_channel_id = duel.get("challenge_channel_id")
-    challenge_message_id = duel.get("challenge_message_id")
-    if challenge_channel_id and challenge_message_id:
-        try:
-            challenge_channel = channel.guild.get_channel(int(challenge_channel_id))
-            if not isinstance(challenge_channel, discord.TextChannel):
-                fetched = await bot.fetch_channel(int(challenge_channel_id))
-                challenge_channel = fetched if isinstance(fetched, discord.TextChannel) else None
-            if challenge_channel is not None:
-                challenge_message = await challenge_channel.fetch_message(int(challenge_message_id))
-                if winner_id is None:
-                    final_description = "**Ничья.**"
-                else:
-                    final_description = (
-                        f"**Победитель:** <@{winner_id}>\n\n"
-                        f"{duel_stats_text(duel, winner_id)}"
-                    )
-                await challenge_message.edit(
-                    embed=None,
-                    view=duel_layout("Дуэль окончена", final_description),
-                )
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
-            pass
-
     try:
         await channel.send(view=result_view)
         for player_id in duel["players"]:
@@ -993,6 +1018,7 @@ async def finish_duel(channel: discord.TextChannel, *, loser_id: int | None = No
         pass
 
     asyncio.create_task(delete_duel_channel_later(channel))
+    await update_duel_public_message(duel, winner_id)
 
 
 async def speed_duel_timer(channel_id: int, seconds: int) -> None:
@@ -1099,7 +1125,7 @@ class DuelDurationView(discord.ui.LayoutView):
     def __init__(self):
         super().__init__(timeout=120)
         self.add_item(discord.ui.Container(
-            discord.ui.TextDisplay("## Длительность дуэли"),
+            discord.ui.TextDisplay("### Длительность дуэли"),
             discord.ui.Separator(),
             discord.ui.TextDisplay("Выберите длительность дуэли."),
             discord.ui.ActionRow(DuelDurationSelect()),
@@ -1146,7 +1172,7 @@ class DuelModeView(discord.ui.LayoutView):
     def __init__(self, challenger: discord.Member, opponent: discord.Member):
         super().__init__(timeout=120)
         self.add_item(discord.ui.Container(
-            discord.ui.TextDisplay("## Настройка дуэли"),
+            discord.ui.TextDisplay("### Настройка дуэли"),
             discord.ui.Separator(),
             discord.ui.TextDisplay(f"**Участники:** {challenger.mention} vs {opponent.mention}"),
             discord.ui.ActionRow(DuelModeSelect()),
@@ -1265,6 +1291,9 @@ class DuelChallengeView(discord.ui.View):
             return
 
         active_duels[channel.id] = {
+            # The public /duel message survives deletion of the private channel.
+            "announcement_channel_id": interaction.channel_id,
+            "announcement_message_id": interaction.message.id,
             "creator_id": challenger.id,
             "players": (challenger.id, opponent.id),
             "started": False,
@@ -1274,8 +1303,6 @@ class DuelChallengeView(discord.ui.View):
             "duration_seconds": None,
             "started_at": None,
             "ended_at": None,
-            "challenge_channel_id": interaction.channel_id,
-            "challenge_message_id": interaction.message.id,
             "task": None,
             "last_author_id": None,
             "current_streak": 0,
@@ -1286,11 +1313,6 @@ class DuelChallengeView(discord.ui.View):
         }
         self.release_pending()
         pending_duel_users.discard(opponent.id)
-
-        await channel.send(
-            view=DuelModeView(challenger, opponent),
-            allowed_mentions=discord.AllowedMentions.none(),
-        )
 
         try:
             await interaction.message.edit(
@@ -1303,6 +1325,11 @@ class DuelChallengeView(discord.ui.View):
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             pass
 
+        await channel.send(
+            view=DuelModeView(challenger, opponent),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
     async def on_timeout(self) -> None:
         if self.accepted:
             return
@@ -1313,7 +1340,7 @@ class DuelChallengeView(discord.ui.View):
         if self.opponent_id is None:
             description = "Вызов никто не принял"
         else:
-            description = f"<@{self.opponent_id}> не принял вызов."
+            description = f"<@{self.opponent_id}>, не принял вызов."
         try:
             await self.message.edit(embed=None, view=duel_layout("Вызов не принят", description))
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
