@@ -1,3 +1,5 @@
+
+
 import asyncio
 import json
 import os
@@ -1456,3 +1458,4 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 if __name__ == "__main__":
     if not TOKEN:
         raise RuntimeError("Переменная окружения TOKEN не задана.")
+    bot.run(TOKEN)
