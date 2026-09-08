@@ -836,6 +836,7 @@ def duel_layout(title: str, description: str, *controls: discord.ui.Item[Any]) -
     """Сообщение дуэли с настоящим системным Separator Discord Components V2."""
     view = discord.ui.LayoutView(timeout=None)
     items: list[Any] = [
+        discord.ui.TextDisplay("-# Дуэль"),
         discord.ui.TextDisplay(f"## {title}"),
         discord.ui.Separator(),
         discord.ui.TextDisplay(description),
@@ -887,6 +888,7 @@ def duel_finished_public_layout(
 ) -> discord.ui.LayoutView:
     """Public result: winner statistics, or both participants in a draw."""
     items: list[Any] = [
+        discord.ui.TextDisplay("-# Дуэль"),
         discord.ui.TextDisplay("## Дуэль окончена"),
         discord.ui.Separator(),
     ]
@@ -990,6 +992,7 @@ async def finish_duel(channel: discord.TextChannel, *, loser_id: int | None = No
         display_order = ((first_id, first_name), (second_id, second_name))
 
     result_items: list[Any] = [
+        discord.ui.TextDisplay('-# Дуэль'),
         discord.ui.TextDisplay('## Результаты дуэли'),
         discord.ui.Separator(),
         discord.ui.TextDisplay(result),
@@ -1080,7 +1083,7 @@ async def start_duel(channel: discord.TextChannel, mode: str, duration_seconds: 
         await channel.send(view=duel_layout(
             "Дуэль на скорость началась",
             f"Длительность: **{seconds} секунд**\n"
-            "Побеждает участник с более высоким WPM.",
+            "Побеждает участник с более высоким **WPM**.",
         ), allowed_mentions=discord.AllowedMentions.none())
     else:
         duel["task"] = asyncio.create_task(endurance_duel_timer(channel.id))
@@ -1125,7 +1128,8 @@ class DuelDurationView(discord.ui.LayoutView):
     def __init__(self):
         super().__init__(timeout=120)
         self.add_item(discord.ui.Container(
-                discord.ui.TextDisplay("## Длительность дуэли"),
+            discord.ui.TextDisplay("-# Дуэль"),
+            discord.ui.TextDisplay("## Длительность дуэли"),
             discord.ui.Separator(),
             discord.ui.ActionRow(DuelDurationSelect()),
             accent_color=COLOR,
@@ -1171,7 +1175,8 @@ class DuelModeView(discord.ui.LayoutView):
     def __init__(self, challenger: discord.Member, opponent: discord.Member):
         super().__init__(timeout=120)
         self.add_item(discord.ui.Container(
-                discord.ui.TextDisplay("## Настройка дуэли"),
+            discord.ui.TextDisplay("-# Дуэль"),
+            discord.ui.TextDisplay("## Настройка дуэли"),
             discord.ui.Separator(),
             discord.ui.TextDisplay(f"**Участники:** {challenger.mention} vs {opponent.mention}"),
             discord.ui.ActionRow(DuelModeSelect()),
@@ -1318,7 +1323,8 @@ class DuelChallengeView(discord.ui.View):
             await interaction.message.edit(
                 embed=None,
                 view=discord.ui.LayoutView(timeout=None).add_item(discord.ui.Container(
-                                discord.ui.TextDisplay("## Канал дуэли создан"),
+                    discord.ui.TextDisplay("-# Дуэль"),
+                    discord.ui.TextDisplay("## Канал дуэли создан"),
                     discord.ui.Separator(),
                     discord.ui.TextDisplay(f"Канал: {channel.mention}"),
                     discord.ui.Separator(),
