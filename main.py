@@ -270,27 +270,41 @@ async def delete_private_room(channel: discord.VoiceChannel) -> None:
         private_room_delete_locks.discard(channel.id)
 
 
+async def cleanup_private_room_if_empty(guild: discord.Guild, channel_id: int) -> None:
+    # Даём Discord обновить voice-state/cache после выхода или перемещения участника.
+    # Несколько коротких проверок закрывают гонку, из-за которой пустой канал иногда
+    # оставался висеть после выхода последнего пользователя.
+    for delay in (0.25, 0.75, 1.5):
+        await asyncio.sleep(delay)
+        channel = guild.get_channel(channel_id)
+        if not isinstance(channel, discord.VoiceChannel):
+            return
+        if channel.id not in private_room_owners:
+            return
+        if channel.members:
+            return
+    channel = guild.get_channel(channel_id)
+    if isinstance(channel, discord.VoiceChannel) and channel.id in private_room_owners and not channel.members:
+        await delete_private_room(channel)
+
+
 async def handle_private_room_voice_update(
     member: discord.Member,
     before: discord.VoiceState,
     after: discord.VoiceState,
 ) -> None:
-    if member.bot or before.channel == after.channel:
+    if before.channel == after.channel:
         return
 
-    # Приватная комната удаляется только тогда, когда в ней больше никого нет.
-    # Если владелец вышел, но внутри остались участники, комната продолжает
-    # существовать и остаётся закреплённой за тем же владельцем.
+    # Проверяем освобождённую приватную комнату для ЛЮБОГО участника, включая ботов.
+    # Иначе бот мог оказаться последним в канале, выйти, а комната не удалялась.
     if isinstance(before.channel, discord.VoiceChannel) and before.channel.id in private_room_owners:
-        await asyncio.sleep(0.3)
-        channel = member.guild.get_channel(before.channel.id)
-        if isinstance(channel, discord.VoiceChannel) and not channel.members:
-            await delete_private_room(channel)
+        asyncio.create_task(cleanup_private_room_if_empty(member.guild, before.channel.id))
 
-    # Пользователь зашёл в канал создания. Если его прежняя комната ещё существует
-    # (например, внутри остались люди), create_private_room вернёт его туда. Если
-    # старая комната уже опустела и была удалена, создастся новая с сохранёнными
-    # настройками пользователя.
+    # Боты не должны создавать себе приватные комнаты.
+    if member.bot:
+        return
+
     if isinstance(after.channel, discord.VoiceChannel) and after.channel.id == PRIVATE_ROOM_CREATE_CHANNEL_ID:
         await create_private_room(member, after.channel)
 
@@ -1006,6 +1020,8 @@ async def finish_duel(channel: discord.TextChannel, *, loser_id: int | None = No
         if index == 0:
             result_items.append(discord.ui.Separator())
     if reason and duel.get("mode") == "endurance":
+        # Divider after the second participant's final statistic, before the endurance reason.
+        result_items.append(discord.ui.Separator())
         result_items.append(discord.ui.TextDisplay('**Причина завершения:** ' + reason))
 
     result_view = discord.ui.LayoutView(timeout=None)
