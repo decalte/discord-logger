@@ -826,11 +826,24 @@ async def ensure_private_room_panel() -> None:
 pending_duel_users: set[int] = set()
 
 
-DUEL_SEPARATOR = "━━━━━━━━━━━━━━━━━━━━"
-
-
 def duel_embed(title: str, description: str) -> discord.Embed:
-    return discord.Embed(title=title, description=f"{DUEL_SEPARATOR}\n\n{description}", color=COLOR)
+    # Используется только для коротких ephemeral-ошибок, где интерактивные
+    # Components V2 не нужны.
+    return discord.Embed(title=title, description=description, color=COLOR)
+
+
+def duel_layout(title: str, description: str, *controls: discord.ui.Item[Any]) -> discord.ui.LayoutView:
+    """Сообщение дуэли с настоящим системным Separator Discord Components V2."""
+    view = discord.ui.LayoutView(timeout=None)
+    items: list[Any] = [
+        discord.ui.TextDisplay(f"## {title}"),
+        discord.ui.Separator(),
+        discord.ui.TextDisplay(description),
+    ]
+    if controls:
+        items.append(discord.ui.ActionRow(*controls))
+    view.add_item(discord.ui.Container(*items, accent_color=COLOR))
+    return view
 
 
 def user_in_active_duel(user_id: int) -> bool:
@@ -926,18 +939,50 @@ async def finish_duel(channel: discord.TextChannel, *, loser_id: int | None = No
     else:
         display_order = ((first_id, first_name), (second_id, second_name))
 
-    stats_blocks = "\n\n".join(
-        f"**{name}**\n{duel_stats_text(duel, member_id)}"
-        for member_id, name in display_order
-    )
-    embed = duel_embed(
-        "Результаты дуэли",
-        f"{result}\n\n{stats_blocks}"
-        + (f"\n\n**Причина завершения:** {reason}" if reason else ""),
-    )
+    result_items: list[Any] = [
+        discord.ui.TextDisplay('## Результаты дуэли'),
+        discord.ui.Separator(),
+        discord.ui.TextDisplay(result),
+    ]
+    for member_id, name in display_order:
+        result_items.append(
+            discord.ui.TextDisplay(f"**{name}**\n{duel_stats_text(duel, member_id)}")
+        )
+        # Native Discord divider after each participant's final statistic.
+        result_items.append(discord.ui.Separator())
+    if reason:
+        result_items.append(discord.ui.TextDisplay('**Причина завершения:** ' + reason))
+
+    result_view = discord.ui.LayoutView(timeout=None)
+    result_view.add_item(discord.ui.Container(*result_items, accent_color=COLOR))
+
+    # Обновляем исходное сообщение вызова после завершения дуэли.
+    challenge_channel_id = duel.get("challenge_channel_id")
+    challenge_message_id = duel.get("challenge_message_id")
+    if challenge_channel_id and challenge_message_id:
+        try:
+            challenge_channel = channel.guild.get_channel(int(challenge_channel_id))
+            if not isinstance(challenge_channel, discord.TextChannel):
+                fetched = await bot.fetch_channel(int(challenge_channel_id))
+                challenge_channel = fetched if isinstance(fetched, discord.TextChannel) else None
+            if challenge_channel is not None:
+                challenge_message = await challenge_channel.fetch_message(int(challenge_message_id))
+                if winner_id is None:
+                    final_description = "**Ничья.**"
+                else:
+                    final_description = (
+                        f"**Победитель:** <@{winner_id}>\n\n"
+                        f"{duel_stats_text(duel, winner_id)}"
+                    )
+                await challenge_message.edit(
+                    embed=None,
+                    view=duel_layout("Дуэль окончена", final_description),
+                )
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
+            pass
 
     try:
-        await channel.send(embed=embed)
+        await channel.send(view=result_view)
         for player_id in duel["players"]:
             member = channel.guild.get_member(player_id)
             if member:
@@ -1013,12 +1058,10 @@ async def start_duel(channel: discord.TextChannel, mode: str, duration_seconds: 
         )
     else:
         duel["task"] = asyncio.create_task(endurance_duel_timer(channel.id))
-        await channel.send(
-            embed=duel_embed(
-                "Дуэль на выдержку началась",
-                "Если один из участников не отправит ни одного сообщения в течение **2 минут**, он проиграет.",
-            )
-        )
+        await channel.send(view=duel_layout(
+            "Дуэль на выдержку началась",
+            "Если один из участников не отправит ни одного сообщения в течение **2 минут**, он проиграет.",
+        ))
 
 
 class DuelDurationSelect(discord.ui.Select):
@@ -1052,10 +1095,16 @@ class DuelDurationSelect(discord.ui.Select):
         await start_duel(interaction.channel, "speed", int(self.values[0]))
 
 
-class DuelDurationView(discord.ui.View):
+class DuelDurationView(discord.ui.LayoutView):
     def __init__(self):
         super().__init__(timeout=120)
-        self.add_item(DuelDurationSelect())
+        self.add_item(discord.ui.Container(
+            discord.ui.TextDisplay("## Длительность дуэли"),
+            discord.ui.Separator(),
+            discord.ui.TextDisplay("Выберите длительность дуэли."),
+            discord.ui.ActionRow(DuelDurationSelect()),
+            accent_color=COLOR,
+        ))
 
 
 class DuelModeSelect(discord.ui.Select):
@@ -1088,18 +1137,21 @@ class DuelModeSelect(discord.ui.Select):
             pass
 
         if selected == "speed":
-            await interaction.channel.send(
-                embed=duel_embed("Длительность дуэли", "Выберите длительность дуэли."),
-                view=DuelDurationView(),
-            )
+            await interaction.channel.send(view=DuelDurationView())
         else:
             await start_duel(interaction.channel, "endurance")
 
 
-class DuelModeView(discord.ui.View):
-    def __init__(self):
+class DuelModeView(discord.ui.LayoutView):
+    def __init__(self, challenger: discord.Member, opponent: discord.Member):
         super().__init__(timeout=120)
-        self.add_item(DuelModeSelect())
+        self.add_item(discord.ui.Container(
+            discord.ui.TextDisplay("## Настройка дуэли"),
+            discord.ui.Separator(),
+            discord.ui.TextDisplay(f"**Участники:** {challenger.mention} vs {opponent.mention}"),
+            discord.ui.ActionRow(DuelModeSelect()),
+            accent_color=COLOR,
+        ))
 
 
 async def create_duel_channel(
@@ -1195,8 +1247,8 @@ class DuelChallengeView(discord.ui.View):
         pending_duel_users.add(opponent.id)
 
         await interaction.response.edit_message(
-            embed=duel_embed("Вызов принят", f"{opponent.mention} принял вызов {challenger.mention}."),
-            view=None,
+            embed=None,
+            view=duel_layout("Вызов принят", f"{opponent.mention} принял вызов {challenger.mention}."),
         )
 
         channel = await create_duel_channel(interaction.guild, challenger, opponent)
@@ -1222,6 +1274,8 @@ class DuelChallengeView(discord.ui.View):
             "duration_seconds": None,
             "started_at": None,
             "ended_at": None,
+            "challenge_channel_id": interaction.channel_id,
+            "challenge_message_id": interaction.message.id,
             "task": None,
             "last_author_id": None,
             "current_streak": 0,
@@ -1234,21 +1288,17 @@ class DuelChallengeView(discord.ui.View):
         pending_duel_users.discard(opponent.id)
 
         await channel.send(
-            embed=duel_embed(
-                "Настройка дуэли",
-                f"**Участники:** {challenger.mention} vs {opponent.mention}",
-            ),
-            view=DuelModeView(),
+            view=DuelModeView(challenger, opponent),
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
         try:
             await interaction.message.edit(
-                embed=duel_embed(
+                embed=None,
+                view=duel_layout(
                     "Канал дуэли создан",
-                    f"Канал: {channel.mention}\n\n{DUEL_SEPARATOR}\n\n{challenger.mention} vs {opponent.mention}",
+                    f"Канал: {channel.mention}\n\n{challenger.mention} vs {opponent.mention}",
                 ),
-                view=None,
             )
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             pass
@@ -1265,7 +1315,7 @@ class DuelChallengeView(discord.ui.View):
         else:
             description = f"<@{self.opponent_id}> не принял вызов."
         try:
-            await self.message.edit(embed=duel_embed("Вызов не принят", description), view=None)
+            await self.message.edit(embed=None, view=duel_layout("Вызов не принят", description))
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             pass
 
