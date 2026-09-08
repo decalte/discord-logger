@@ -1264,7 +1264,7 @@ class DuelChallengeView(discord.ui.View):
 
         if interaction.user.id == self.challenger_id:
             await interaction.response.send_message(
-                view=duel_layout("Не удалось начать дуэль", "Вы не можете принять собственный вызов."),
+                view=duel_layout("Принять дуэль", "Вы не можете принять собственный вызов."),
                 ephemeral=True,
             )
             return
@@ -1411,9 +1411,9 @@ async def duel_command(interaction: discord.Interaction, opponent: discord.Membe
 
     view = DuelChallengeView(challenger.id, opponent.id if opponent is not None else None)
     if opponent is None:
-        description = f"{challenger.mention} бросил вызов."
+        description = f"{challenger.mention}, бросил вызов."
     else:
-        description = f"{opponent.mention}, Вам бросил вызов {challenger.mention}."
+        description = f"{opponent.mention}, вам бросил вызов {challenger.mention}."
 
     challenge_layout = duel_layout("Вызов на дуэль", description, *view.children)
     await interaction.response.send_message(
