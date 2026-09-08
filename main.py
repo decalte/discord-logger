@@ -13,6 +13,7 @@ TOKEN = os.getenv("TOKEN")
 
 PRIVATE_ROOM_CONTROL_CHANNEL_ID = 1546849303379706016
 PRIVATE_ROOM_CREATE_CHANNEL_ID = 1546849353371492413
+DUEL_CATEGORY_ID = 1546866271482683494
 
 COLOR = discord.Color(0x303136)
 BASE_DIR = Path(__file__).resolve().parent
@@ -822,25 +823,65 @@ async def ensure_private_room_panel() -> None:
 # Дуэли
 # -----------------------------------------------------------------------------
 
+pending_duel_users: set[int] = set()
+
+
 def duel_embed(title: str, description: str) -> discord.Embed:
     return discord.Embed(title=title, description=description, color=COLOR)
+
+
+def user_in_active_duel(user_id: int) -> bool:
+    return any(user_id in duel["players"] for duel in active_duels.values())
+
+
+def user_busy_with_duel(user_id: int) -> bool:
+    return user_id in pending_duel_users or user_in_active_duel(user_id)
+
+
+def duel_minutes(duel: dict[str, Any]) -> float:
+    if duel.get("mode") == "speed" and duel.get("duration_seconds"):
+        return max(float(duel["duration_seconds"]) / 60.0, 1 / 60)
+    started_at = duel.get("started_at")
+    ended_at = duel.get("ended_at")
+    if started_at is None:
+        return 1 / 60
+    if ended_at is None:
+        ended_at = asyncio.get_running_loop().time()
+    return max((float(ended_at) - float(started_at)) / 60.0, 1 / 60)
+
+
+def duel_wpm(duel: dict[str, Any], member_id: int) -> int:
+    stats = duel["stats"][member_id]
+    return round((stats["characters"] / 5) / duel_minutes(duel))
 
 
 def duel_stats_text(duel: dict[str, Any], member_id: int) -> str:
     stats = duel["stats"][member_id]
     return (
-        f"**Сообщений:** {stats['messages']}\n"
-        f"**Символов:** {stats['characters']}\n"
-        f"**Макс. сообщений подряд:** {stats['max_streak']}\n"
-        f"**Макс. символов в одном сообщении:** {stats['max_message_chars']}"
+        f"Сообщений: **{stats['messages']}**\n"
+        f"Символов: **{stats['characters']}**\n"
+        f"WPM: **{duel_wpm(duel, member_id)}**\n"
+        f"Макс. сообщений подряд: **{stats['max_streak']}**\n"
+        f"Макс. символов в сообщении: **{stats['max_message_chars']}**"
     )
+
+
+async def delete_duel_channel_later(channel: discord.TextChannel) -> None:
+    await asyncio.sleep(120)
+    try:
+        await channel.delete(reason="Дуэль завершена")
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        pass
 
 
 async def finish_duel(channel: discord.TextChannel, *, loser_id: int | None = None, reason: str = "") -> None:
     duel = active_duels.pop(channel.id, None)
     if duel is None or duel.get("finished"):
         return
+
     duel["finished"] = True
+    duel["ended_at"] = asyncio.get_running_loop().time()
+
     task = duel.get("task")
     if task and task is not asyncio.current_task() and not task.done():
         task.cancel()
@@ -854,28 +895,37 @@ async def finish_duel(channel: discord.TextChannel, *, loser_id: int | None = No
     winner_id: int | None = None
     if loser_id is not None:
         winner_id = second_id if loser_id == first_id else first_id
-    elif duel["mode"] == "speed":
+    elif duel.get("mode") == "speed":
         a = duel["stats"][first_id]
         b = duel["stats"][second_id]
-        score_a = (a["messages"], a["characters"], a["max_streak"], a["max_message_chars"])
-        score_b = (b["messages"], b["characters"], b["max_streak"], b["max_message_chars"])
+        score_a = (
+            duel_wpm(duel, first_id),
+            a["characters"],
+            a["messages"],
+            a["max_streak"],
+            a["max_message_chars"],
+        )
+        score_b = (
+            duel_wpm(duel, second_id),
+            b["characters"],
+            b["messages"],
+            b["max_streak"],
+            b["max_message_chars"],
+        )
         if score_a > score_b:
             winner_id = first_id
         elif score_b > score_a:
             winner_id = second_id
 
-    if winner_id is None:
-        result = "**Ничья.**"
-    else:
-        result = f"🏆 **Победитель:** <@{winner_id}>"
-
+    result = "**Ничья.**" if winner_id is None else f"**Победитель:** <@{winner_id}>"
     embed = duel_embed(
         "Результаты дуэли",
         f"{result}\n\n"
-        f"### {first_name}\n{duel_stats_text(duel, first_id)}\n\n"
-        f"### {second_name}\n{duel_stats_text(duel, second_id)}"
+        f"**{first_name}**\n{duel_stats_text(duel, first_id)}\n\n"
+        f"**{second_name}**\n{duel_stats_text(duel, second_id)}"
         + (f"\n\n**Причина завершения:** {reason}" if reason else ""),
     )
+
     try:
         await channel.send(embed=embed)
         for player_id in duel["players"]:
@@ -886,6 +936,8 @@ async def finish_duel(channel: discord.TextChannel, *, loser_id: int | None = No
                 await channel.set_permissions(member, overwrite=overwrite, reason="Дуэль завершена")
     except (discord.Forbidden, discord.HTTPException):
         pass
+
+    asyncio.create_task(delete_duel_channel_later(channel))
 
 
 async def speed_duel_timer(channel_id: int, seconds: int) -> None:
@@ -912,10 +964,12 @@ async def endurance_duel_timer(channel_id: int) -> None:
             expired = [pid for pid in duel["players"] if now - duel["last_message_at"][pid] >= 120]
             if not expired:
                 continue
+
             channel = bot.get_channel(channel_id)
             if not isinstance(channel, discord.TextChannel):
                 active_duels.pop(channel_id, None)
                 return
+
             if len(expired) == 2:
                 await finish_duel(channel, reason="Оба участника не писали 2 минуты.")
             else:
@@ -929,26 +983,30 @@ async def start_duel(channel: discord.TextChannel, mode: str, duration_seconds: 
     duel = active_duels.get(channel.id)
     if duel is None or duel.get("started"):
         return
+
     duel["started"] = True
     duel["mode"] = mode
+    duel["duration_seconds"] = duration_seconds
     now = asyncio.get_running_loop().time()
+    duel["started_at"] = now
     duel["last_message_at"] = {pid: now for pid in duel["players"]}
 
     if mode == "speed":
-        duel["task"] = asyncio.create_task(speed_duel_timer(channel.id, int(duration_seconds or 60)))
+        seconds = int(duration_seconds or 60)
+        duel["task"] = asyncio.create_task(speed_duel_timer(channel.id, seconds))
         await channel.send(
             embed=duel_embed(
-                "⚡ Дуэль на скорость началась",
-                f"Время: **{int((duration_seconds or 60) / 60)} мин.**\n"
-                "Побеждает тот, у кого больше сообщений. При равенстве учитываются символы, серия сообщений и длина сообщения.",
+                "Дуэль на скорость началась",
+                f"Время: **{max(1, seconds // 60)} мин.**\n"
+                "Побеждает участник с более высоким WPM.",
             )
         )
     else:
         duel["task"] = asyncio.create_task(endurance_duel_timer(channel.id))
         await channel.send(
             embed=duel_embed(
-                "🕒 Дуэль на выдержку началась",
-                "Таймер каждого участника уже запущен. Кто первым **не напишет ничего 2 минуты**, тот проигрывает.",
+                "Дуэль на выдержку началась",
+                "Если один из участников не отправит ни одного сообщения в течение **2 минут**, он проиграет.",
             )
         )
 
@@ -970,10 +1028,18 @@ class DuelDurationSelect(discord.ui.Select):
         if not isinstance(interaction.channel, discord.TextChannel):
             return
         duel = active_duels.get(interaction.channel.id)
-        if duel is None or interaction.user.id != duel["creator_id"]:
-            await interaction.response.send_message("Только создатель дуэли может выбрать время.", ephemeral=True)
+        if duel is None or interaction.user.id not in duel["players"]:
+            await interaction.response.send_message("Только участники дуэли могут выбрать время.", ephemeral=True)
             return
-        await interaction.response.edit_message(view=None)
+        if duel.get("started"):
+            await interaction.response.send_message("Дуэль уже началась.", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        try:
+            await interaction.message.delete()
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
         await start_duel(interaction.channel, "speed", int(self.values[0]))
 
 
@@ -988,8 +1054,8 @@ class DuelModeSelect(discord.ui.Select):
         super().__init__(
             placeholder="Выберите режим дуэли",
             options=[
-                discord.SelectOption(label="На скорость", description="Кто напишет больше за выбранное время", value="speed", emoji="⚡"),
-                discord.SelectOption(label="На выдержку", description="Проигрывает тот, кто молчит 2 минуты", value="endurance", emoji="🕒"),
+                discord.SelectOption(label="На скорость", description="Кто напишет больше за выбранное время", value="speed"),
+                discord.SelectOption(label="На выдержку", description="Проигрывает тот, кто молчит 2 минуты", value="endurance"),
             ],
         )
 
@@ -997,16 +1063,27 @@ class DuelModeSelect(discord.ui.Select):
         if not isinstance(interaction.channel, discord.TextChannel):
             return
         duel = active_duels.get(interaction.channel.id)
-        if duel is None or interaction.user.id != duel["creator_id"]:
-            await interaction.response.send_message("Только создатель дуэли может выбрать режим.", ephemeral=True)
+        if duel is None or interaction.user.id not in duel["players"]:
+            await interaction.response.send_message("Только участники дуэли могут выбрать режим.", ephemeral=True)
             return
-        if self.values[0] == "speed":
-            await interaction.response.edit_message(
-                embed=duel_embed("⚡ Дуэль на скорость", "Выберите, сколько времени участники будут писать на скорость."),
+        if duel.get("mode_selected") or duel.get("started"):
+            await interaction.response.send_message("Режим дуэли уже выбран.", ephemeral=True)
+            return
+
+        duel["mode_selected"] = True
+        selected = self.values[0]
+        await interaction.response.defer()
+        try:
+            await interaction.message.delete()
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
+
+        if selected == "speed":
+            await interaction.channel.send(
+                embed=duel_embed("Дуэль на скорость", "Выберите длительность дуэли."),
                 view=DuelDurationView(),
             )
         else:
-            await interaction.response.edit_message(view=None)
             await start_duel(interaction.channel, "endurance")
 
 
@@ -1016,66 +1093,220 @@ class DuelModeView(discord.ui.View):
         self.add_item(DuelModeSelect())
 
 
-@bot.tree.command(name="duel", description="Начать текстовую дуэль с участником")
-@discord.app_commands.describe(opponent="Участник, с которым будет дуэль")
-async def duel_command(interaction: discord.Interaction, opponent: discord.Member) -> None:
-    if interaction.guild is None or not isinstance(interaction.user, discord.Member):
-        await interaction.response.send_message("Команда доступна только на сервере.", ephemeral=True)
-        return
-    if opponent.bot or opponent.id == interaction.user.id:
-        await interaction.response.send_message("Выберите другого участника, который не является ботом.", ephemeral=True)
-        return
-    if any(interaction.user.id in d["players"] or opponent.id in d["players"] for d in active_duels.values()):
-        await interaction.response.send_message("Один из участников уже находится в активной дуэли.", ephemeral=True)
-        return
+async def create_duel_channel(
+    guild: discord.Guild,
+    challenger: discord.Member,
+    opponent: discord.Member,
+) -> discord.TextChannel | None:
+    category = guild.get_channel(DUEL_CATEGORY_ID)
+    if category is None:
+        try:
+            category = await guild.fetch_channel(DUEL_CATEGORY_ID)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return None
+    if not isinstance(category, discord.CategoryChannel):
+        return None
 
-    await interaction.response.defer(ephemeral=True)
-    base_channel = interaction.channel if isinstance(interaction.channel, discord.TextChannel) else None
-    category = base_channel.category if base_channel else None
-    me = interaction.guild.me
+    me = guild.me
     overwrites: dict[Any, discord.PermissionOverwrite] = {
-        interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False, send_messages=False),
-        interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+        guild.default_role: discord.PermissionOverwrite(view_channel=False, send_messages=False),
+        challenger: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
         opponent: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
     }
     if me:
-        overwrites[me] = discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True, read_message_history=True)
+        overwrites[me] = discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            manage_channels=True,
+            read_message_history=True,
+        )
 
     try:
-        channel = await interaction.guild.create_text_channel(
-            name=f"duel-{interaction.user.name}-{opponent.name}"[:100],
+        return await guild.create_text_channel(
+            name=f"duel-{challenger.name}-{opponent.name}"[:100],
             category=category,
             overwrites=overwrites,
-            reason=f"Дуэль {interaction.user} vs {opponent}",
+            reason=f"Дуэль {challenger} vs {opponent}",
         )
     except (discord.Forbidden, discord.HTTPException):
-        await interaction.followup.send("Не удалось создать закрытый канал для дуэли. Проверьте права бота.", ephemeral=True)
+        return None
+
+
+class DuelChallengeView(discord.ui.View):
+    def __init__(self, challenger_id: int, opponent_id: int | None):
+        super().__init__(timeout=120)
+        self.challenger_id = challenger_id
+        self.opponent_id = opponent_id
+        self.message: discord.Message | None = None
+        self.accepted = False
+
+    def release_pending(self) -> None:
+        pending_duel_users.discard(self.challenger_id)
+        if self.opponent_id is not None:
+            pending_duel_users.discard(self.opponent_id)
+
+    @discord.ui.button(label="Принять", style=discord.ButtonStyle.secondary)
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+            return
+
+        challenger = interaction.guild.get_member(self.challenger_id)
+        if challenger is None:
+            await interaction.response.send_message("Участник больше недоступен.", ephemeral=True)
+            return
+
+        if interaction.user.id == self.challenger_id:
+            await interaction.response.send_message(
+                embed=duel_embed("Начать дуэль", "Вы не можете **принять** собственный вызов."),
+                ephemeral=True,
+            )
+            return
+
+        if self.opponent_id is not None and interaction.user.id != self.opponent_id:
+            await interaction.response.send_message(
+                embed=duel_embed("Начать дуэль", "Этот вызов предназначен другому участнику."),
+                ephemeral=True,
+            )
+            return
+
+        opponent = interaction.user
+        if user_in_active_duel(challenger.id) or user_in_active_duel(opponent.id):
+            await interaction.response.send_message(
+                embed=duel_embed("Начать дуэль", "Один из участников уже находится в активной дуэли."),
+                ephemeral=True,
+            )
+            return
+
+        if self.accepted:
+            await interaction.response.send_message("Вызов уже принят.", ephemeral=True)
+            return
+
+        self.accepted = True
+        self.stop()
+        pending_duel_users.add(opponent.id)
+
+        await interaction.response.edit_message(
+            embed=duel_embed("Дуэль", "Вызов принят"),
+            view=None,
+        )
+
+        channel = await create_duel_channel(interaction.guild, challenger, opponent)
+        if channel is None:
+            self.release_pending()
+            pending_duel_users.discard(opponent.id)
+            try:
+                await interaction.message.edit(
+                    embed=duel_embed("Дуэль", "Не удалось создать канал дуэли."),
+                    view=None,
+                )
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
+            return
+
+        active_duels[channel.id] = {
+            "creator_id": challenger.id,
+            "players": (challenger.id, opponent.id),
+            "started": False,
+            "finished": False,
+            "mode": None,
+            "mode_selected": False,
+            "duration_seconds": None,
+            "started_at": None,
+            "ended_at": None,
+            "task": None,
+            "last_author_id": None,
+            "current_streak": 0,
+            "stats": {
+                challenger.id: {"messages": 0, "characters": 0, "max_streak": 0, "max_message_chars": 0},
+                opponent.id: {"messages": 0, "characters": 0, "max_streak": 0, "max_message_chars": 0},
+            },
+        }
+        self.release_pending()
+        pending_duel_users.discard(opponent.id)
+
+        await channel.send(
+            embed=duel_embed(
+                "Дуэль",
+                f"**Участники:** {challenger.mention} vs {opponent.mention}",
+            ),
+            view=DuelModeView(),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+        try:
+            await interaction.message.edit(
+                embed=duel_embed("Канал создан", f"Канал: {channel.mention}"),
+                view=None,
+            )
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
+
+    async def on_timeout(self) -> None:
+        if self.accepted:
+            return
+        self.release_pending()
+        if self.message is None:
+            return
+
+        if self.opponent_id is None:
+            description = "Вызов никто не принял"
+        else:
+            description = f"<@{self.opponent_id}> не принял вызов."
+        try:
+            await self.message.edit(embed=duel_embed("Дуэль", description), view=None)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
+
+
+@bot.tree.command(name="duel", description="Начать дуэль с участником")
+@discord.app_commands.describe(opponent="Участник, с которым будет дуэль")
+async def duel_command(interaction: discord.Interaction, opponent: discord.Member | None = None) -> None:
+    if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+        await interaction.response.send_message("Команда доступна только на сервере.", ephemeral=True)
         return
 
-    active_duels[channel.id] = {
-        "creator_id": interaction.user.id,
-        "players": (interaction.user.id, opponent.id),
-        "started": False,
-        "finished": False,
-        "mode": None,
-        "task": None,
-        "last_author_id": None,
-        "current_streak": 0,
-        "stats": {
-            interaction.user.id: {"messages": 0, "characters": 0, "max_streak": 0, "max_message_chars": 0},
-            opponent.id: {"messages": 0, "characters": 0, "max_streak": 0, "max_message_chars": 0},
-        },
-    }
-    await channel.send(
-        content=f"{interaction.user.mention} {opponent.mention}",
-        embed=duel_embed(
-            "⚔️ Текстовая дуэль",
-            f"**Участники:** {interaction.user.mention} vs {opponent.mention}\n\nВыберите режим дуэли.",
-        ),
-        view=DuelModeView(),
+    challenger = interaction.user
+
+    if opponent is not None and opponent.id == challenger.id:
+        await interaction.response.send_message(
+            embed=duel_embed("Начать дуэль", "Вы не можете **начать** дуэль с самим собой."),
+            ephemeral=True,
+        )
+        return
+
+    if opponent is not None and opponent.bot:
+        await interaction.response.send_message(
+            embed=duel_embed("Начать дуэль", "Вы не можете **начать** дуэль с ботом."),
+            ephemeral=True,
+        )
+        return
+
+    if user_busy_with_duel(challenger.id) or (opponent is not None and user_busy_with_duel(opponent.id)):
+        await interaction.response.send_message(
+            embed=duel_embed("Начать дуэль", "Один из участников уже находится в активной дуэли."),
+            ephemeral=True,
+        )
+        return
+
+    pending_duel_users.add(challenger.id)
+    if opponent is not None:
+        pending_duel_users.add(opponent.id)
+
+    view = DuelChallengeView(challenger.id, opponent.id if opponent is not None else None)
+    if opponent is None:
+        embed = duel_embed("Дуэль", f"{challenger.mention} бросил вызов")
+    else:
+        embed = duel_embed("Дуэль", f"{opponent.mention}, Вам бросил вызов {challenger.mention}")
+
+    await interaction.response.send_message(
+        embed=embed,
+        view=view,
         allowed_mentions=discord.AllowedMentions(users=True),
     )
-    await interaction.followup.send(f"Дуэль создана: {channel.mention}", ephemeral=True)
+    try:
+        view.message = await interaction.original_response()
+    except discord.HTTPException:
+        view.release_pending()
 
 
 @bot.event
