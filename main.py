@@ -256,7 +256,7 @@ async def send_private_room_reply(
     # Components V2: сохраняем компактный заголовок без ## и добавляем
     # настоящий системный Separator Discord сразу после него.
     items: list[Any] = [
-        discord.ui.TextDisplay(title),
+        discord.ui.TextDisplay(f"**{title}**"),
         discord.ui.Separator(),
         discord.ui.TextDisplay(description),
     ]
@@ -1516,7 +1516,7 @@ class DuelChallengeView(discord.ui.View):
 
 
 REPORT_COLOR_OPEN = discord.Color(0x303136)
-REPORT_COLOR_ACCEPTED = discord.Color(0x57F287)
+REPORT_COLOR_ACCEPTED = discord.Color(0x248046)
 REPORT_COLOR_REJECTED = discord.Color(0xED4245)
 _report_number_lock = asyncio.Lock()
 
@@ -1534,11 +1534,11 @@ def report_review_layout(title: str, reporter_id: int, target_id: int, reason: s
                          color: discord.Color = REPORT_COLOR_OPEN,
                          view_items: list[discord.ui.Item[Any]] | None = None) -> discord.ui.LayoutView:
     info = [
-        f"**Отправитель:** <@{reporter_id}>",
+        f"**Отправил:** <@{reporter_id}>",
         f"**На пользователя:** <@{target_id}>",
     ]
     if moderator_id is not None:
-        info.insert(0, f"**Модератор:** <@{moderator_id}>")
+        info.insert(0, f"**Принял:** <@{moderator_id}>")
     items: list[Any] = [
         discord.ui.TextDisplay("-# Жалобы"),
         discord.ui.TextDisplay(f"## {title}"),
@@ -1611,7 +1611,7 @@ class ReportReviewView(discord.ui.LayoutView):
             discord.ui.TextDisplay("## Новая жалоба"),
             discord.ui.Separator(),
             discord.ui.TextDisplay(
-                f"**Отправитель:** <@{reporter_id}>\n"
+                f"**Отправил:** <@{reporter_id}>\n"
                 f"**На пользователя:** <@{target_id}>"
             ),
             discord.ui.Separator(),
@@ -1685,7 +1685,35 @@ class ReportReviewView(discord.ui.LayoutView):
             number, self.reporter_id, self.target_id, moderator.id, self.reason,
             interaction.message.channel_id, interaction.message.id,
         )
-        await channel.send(view=case_view, allowed_mentions=discord.AllowedMentions.none())
+
+        # Discord иногда не сразу применяет overwrites к только что созданному каналу.
+        # Повторно получаем канал и несколько раз пробуем отправить панель жалобы.
+        report_channel: discord.TextChannel = channel
+        try:
+            fetched = await guild.fetch_channel(channel.id)
+            if isinstance(fetched, discord.TextChannel):
+                report_channel = fetched
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
+
+        case_sent = False
+        for attempt in range(3):
+            try:
+                await report_channel.send(
+                    view=case_view,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+                case_sent = True
+                break
+            except (discord.Forbidden, discord.HTTPException) as error:
+                print(f"Не удалось отправить панель жалобы #{number}, попытка {attempt + 1}: {error}")
+                await asyncio.sleep(1)
+
+        if not case_sent:
+            await interaction.followup.send(
+                "Канал жалобы создан, но бот не смог отправить в него панель. Проверьте права бота.",
+                ephemeral=True,
+            )
 
 
 class ReportCaseView(discord.ui.LayoutView):
@@ -1712,7 +1740,7 @@ class ReportCaseView(discord.ui.LayoutView):
             discord.ui.TextDisplay(
                 f"**Отправил жалобу:** <@{reporter_id}>\n"
                 f"**На пользователя:** <@{target_id}>\n"
-                f"**Модератор:** <@{moderator_id}>"
+                f"**Принял:** <@{moderator_id}>"
             ),
             discord.ui.Separator(),
             discord.ui.TextDisplay(f"**Причина:**\n> {reason}"),
@@ -1750,8 +1778,8 @@ class ReportCaseView(discord.ui.LayoutView):
             try:
                 msg = await review_channel.fetch_message(self.review_message_id)
                 body = (
-                    f"**Модератор:** <@{self.moderator_id}>\n"
-                    f"**Отправитель:** <@{self.reporter_id}>\n"
+                    f"**Принял:** <@{self.moderator_id}>\n"
+                    f"**Отправил:** <@{self.reporter_id}>\n"
                     f"**На пользователя:** <@{self.target_id}>\n\n"
                     f"**Решение:** {decision}\n\n"
                     f"**Причина жалобы:**\n> {self.reason}"
