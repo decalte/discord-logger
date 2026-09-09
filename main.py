@@ -86,7 +86,9 @@ def discord_datetime(value: datetime | None = None) -> str:
 
 
 def member_id_text(user: discord.abc.User) -> str:
-    return f"{user.mention}\nID: `{user.id}`"
+    name = discord.utils.escape_markdown(user.display_name)
+    profile_url = f"https://discord.com/users/{user.id}"
+    return f"[@{name}]({profile_url})\nID: `{user.id}`"
 
 
 def channel_id_text(channel: discord.abc.GuildChannel | discord.Thread) -> str:
@@ -114,20 +116,14 @@ async def get_log_channel(guild: discord.Guild, channel_id: int) -> discord.abc.
 
 async def send_log_to(
     guild: discord.Guild, view: discord.ui.LayoutView, channel_id: int,
-    *, mention_users: tuple[discord.abc.User, ...] = (),
 ) -> discord.Message | None:
     channel = await get_log_channel(guild, channel_id)
     if channel is None:
         return None
     try:
-        # Разрешаем только участников события; упоминания из цитат не включаем.
-        # silent подавляет push/desktop-уведомления, но не значок упоминания.
         return await channel.send(
             view=view,
-            allowed_mentions=discord.AllowedMentions(
-                everyone=False, roles=False, users=list(mention_users), replied_user=False,
-            ),
-            silent=True,
+            allowed_mentions=discord.AllowedMentions.none(),
         )
     except (discord.Forbidden, discord.HTTPException) as error:
         print(f"Ошибка отправки лога в канал {channel_id}: {error}")
@@ -153,16 +149,14 @@ def log_layout(section: str, title: str, body: str, *, url: str | None = None) -
 
 async def send_server_log(
     guild: discord.Guild, view: discord.ui.LayoutView,
-    *, mention_users: tuple[discord.abc.User, ...] = (),
 ) -> discord.Message | None:
-    return await send_log_to(guild, view, SERVER_LOG_CHANNEL_ID, mention_users=mention_users)
+    return await send_log_to(guild, view, SERVER_LOG_CHANNEL_ID)
 
 
 async def send_message_log(
     guild: discord.Guild, view: discord.ui.LayoutView,
-    *, mention_users: tuple[discord.abc.User, ...] = (),
 ) -> discord.Message | None:
-    return await send_log_to(guild, view, MESSAGE_LOG_CHANNEL_ID, mention_users=mention_users)
+    return await send_log_to(guild, view, MESSAGE_LOG_CHANNEL_ID)
 
 
 async def find_message_deleter(message: discord.Message) -> discord.abc.User | None:
@@ -1659,7 +1653,7 @@ async def on_message_edit(before: discord.Message, after: discord.Message) -> No
         )),
         accent_color=COLOR,
     ))
-    await send_message_log(before.guild, view, mention_users=(before.author,))
+    await send_message_log(before.guild, view)
 
 
 @bot.event
@@ -1685,7 +1679,8 @@ async def on_message_delete(message: discord.Message) -> None:
     ]
     if message.content and message.content.strip():
         items.append(discord.ui.TextDisplay(f"Сообщение:\n> {limited_text(message.content)}"))
-        items.append(discord.ui.Separator())
+        if message.attachments:
+            items.append(discord.ui.Separator())
     if message.attachments:
         attachment_title = "Вложение:" if len(message.attachments) == 1 else "Вложения:"
         attachment_lines = [attachment_title]
@@ -1693,10 +1688,7 @@ async def on_message_delete(message: discord.Message) -> None:
         items.append(discord.ui.TextDisplay("\n".join(attachment_lines)))
     view = discord.ui.LayoutView(timeout=None)
     view.add_item(discord.ui.Container(*items, accent_color=COLOR))
-    await send_message_log(
-        message.guild, view,
-        mention_users=(message.author, deleter) if deleter else (message.author,),
-    )
+    await send_message_log(message.guild, view)
 
 
 def server_member_log_layout(member: discord.Member, *, joined: bool) -> discord.ui.LayoutView:
@@ -1746,7 +1738,6 @@ def server_member_log_layout(member: discord.Member, *, joined: bool) -> discord
 async def on_member_join(member: discord.Member) -> None:
     await send_server_log(
         member.guild, server_member_log_layout(member, joined=True),
-        mention_users=(member,),
     )
 
 
@@ -1754,7 +1745,6 @@ async def on_member_join(member: discord.Member) -> None:
 async def on_member_remove(member: discord.Member) -> None:
     await send_server_log(
         member.guild, server_member_log_layout(member, joined=False),
-        mention_users=(member,),
     )
 
 
