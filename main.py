@@ -1597,13 +1597,13 @@ async def on_message_edit(before: discord.Message, after: discord.Message) -> No
         return
 
     info = (
-        f"**Пользователь:** {before.author.mention}\n"
-        f"**ID:** `{before.author.id}`\n"
-        f"**Канал:** {before.channel.mention} (`{before.channel.id}`)"
+        f"Пользователь: {before.author.mention}\n"
+        f"ID: `{before.author.id}`\n"
+        f"Канал: {before.channel.mention} (`{before.channel.id}`)"
     )
     content = (
-        f"**Было:**\n> {limited_text(before.content, 'Текст отсутствует')}\n\n"
-        f"**Стало:**\n> {limited_text(after.content, 'Текст отсутствует')}"
+        f"Было:\n> {limited_text(before.content, 'Текст отсутствует')}\n\n"
+        f"Стало:\n> {limited_text(after.content, 'Текст отсутствует')}"
     )
     view = discord.ui.LayoutView(timeout=None)
     view.add_item(discord.ui.Container(
@@ -1630,20 +1630,20 @@ async def on_message_delete(message: discord.Message) -> None:
     deleter = await find_message_deleter(message)
     info_lines = []
     if deleter:
-        info_lines.append(f"**Исполнитель:** {deleter.mention} (`{deleter.id}`)")
+        info_lines.append(f"Исполнитель: {deleter.mention} (`{deleter.id}`)")
     info_lines.extend([
-        f"**Пользователь:** {message.author.mention}",
-        f"**ID:** `{message.author.id}`",
-        f"**Канал:** {message.channel.mention} (`{message.channel.id}`)",
+        f"Пользователь: {message.author.mention}",
+        f"ID: `{message.author.id}`",
+        f"Канал: {message.channel.mention} (`{message.channel.id}`)",
     ])
 
     content_lines: list[str] = []
     if message.content and message.content.strip():
-        content_lines.extend(["**Сообщение:**", f"> {limited_text(message.content)}"])
+        content_lines.extend(["Сообщение:", f"> {limited_text(message.content)}"])
     if message.attachments:
         if content_lines:
             content_lines.append("")
-        attachment_title = "**Вложение:**" if len(message.attachments) == 1 else "**Вложения:**"
+        attachment_title = "Вложение:" if len(message.attachments) == 1 else "Вложения:"
         content_lines.append(attachment_title)
         content_lines.extend(f"> [{item.filename}]({item.url})" for item in message.attachments)
 
@@ -1666,8 +1666,8 @@ def server_member_log_layout(member: discord.Member, *, joined: bool) -> discord
         title = "Участник присоединился"
         action = "присоединился к серверу."
         details = (
-            f"**Аккаунт создан:** {discord_datetime(member.created_at)}\n"
-            f"**На сервере:** {member.guild.member_count or 0} участников."
+            f"Аккаунт создан: {discord_datetime(member.created_at)}\n"
+            f"На сервере: {member.guild.member_count or 0} участников."
         )
     else:
         title = "Участник покинул сервер"
@@ -1682,9 +1682,9 @@ def server_member_log_layout(member: discord.Member, *, joined: bool) -> discord
         else:
             stayed_text = "Неизвестно"
         details = (
-            f"**Присоединился:** {joined_text}\n"
-            f"**Пробыл на сервере:** {stayed_text}\n"
-            f"**На сервере:** {member.guild.member_count or 0} участников."
+            f"Присоединился: {joined_text}\n"
+            f"Пробыл на сервере: {stayed_text}\n"
+            f"На сервере: {member.guild.member_count or 0} участников."
         )
 
     view = discord.ui.LayoutView(timeout=None)
@@ -1694,8 +1694,8 @@ def server_member_log_layout(member: discord.Member, *, joined: bool) -> discord
         discord.ui.Separator(),
         discord.ui.TextDisplay(
             f"{member.mention}, {action}\n\n"
-            f"**Пользователь:** {member}\n"
-            f"**ID:** `{member.id}`"
+            f"Пользователь: {member}\n"
+            f"ID: `{member.id}`"
         ),
         discord.ui.Separator(),
         discord.ui.TextDisplay(details),
