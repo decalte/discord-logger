@@ -86,9 +86,7 @@ def discord_datetime(value: datetime | None = None) -> str:
 
 
 def member_id_text(user: discord.abc.User) -> str:
-    name = discord.utils.escape_markdown(user.display_name)
-    profile_url = f"https://discord.com/users/{user.id}"
-    return f"[@{name}]({profile_url})\nID: `{user.id}`"
+    return f"{user.mention}\nID: `{user.id}`"
 
 
 def channel_id_text(channel: discord.abc.GuildChannel | discord.Thread) -> str:
