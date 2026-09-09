@@ -125,8 +125,8 @@ async def send_log_to(guild: discord.Guild, view: discord.ui.LayoutView, channel
 
 def log_layout(section: str, title: str, body: str, *, url: str | None = None) -> discord.ui.LayoutView:
     items: list[Any] = [
-        discord.ui.TextDisplay(f"## {section}"),
-        discord.ui.TextDisplay(f"### {title}"),
+        discord.ui.TextDisplay(f"-# {section}"),
+        discord.ui.TextDisplay(f"## {title}"),
         discord.ui.Separator(),
         discord.ui.TextDisplay(body),
     ]
@@ -264,9 +264,9 @@ async def send_private_room_reply(
     reply_view.add_item(discord.ui.Container(*items, accent_color=COLOR))
 
     if interaction.response.is_done():
-        await interaction.followup.send(view=reply_view, ephemeral=True)
+        await interaction.followup.send(view=reply_view, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
     else:
-        await interaction.response.send_message(view=reply_view, ephemeral=True)
+        await interaction.response.send_message(view=reply_view, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
 
 async def require_private_room(
@@ -1594,16 +1594,30 @@ async def on_message_edit(before: discord.Message, after: discord.Message) -> No
     if before.author.bot or not before.guild or before.content == after.content:
         return
 
-    body = (
+    info = (
         f"**Пользователь:** {before.author.mention}\n"
         f"**ID:** `{before.author.id}`\n"
-        f"**Канал:** {before.channel.mention} (`{before.channel.id}`)\n\n"
-        f"**Было**\n{limited_text(before.content, 'Текст отсутствует')}\n\n"
-        f"**Стало**\n{limited_text(after.content, 'Текст отсутствует')}"
+        f"**Канал:** {before.channel.mention} (`{before.channel.id}`)"
     )
-    await send_message_log(before.guild, log_layout(
-        "Логи сообщений", "Сообщение изменено", body, url=after.jump_url
+    content = (
+        f"**Было:**\n> {limited_text(before.content, 'Текст отсутствует')}\n\n"
+        f"**Стало:**\n> {limited_text(after.content, 'Текст отсутствует')}"
+    )
+    view = discord.ui.LayoutView(timeout=None)
+    view.add_item(discord.ui.Container(
+        discord.ui.TextDisplay("-# Логи сообщений"),
+        discord.ui.TextDisplay("## Сообщение изменено"),
+        discord.ui.Separator(),
+        discord.ui.TextDisplay(info),
+        discord.ui.Separator(),
+        discord.ui.TextDisplay(content),
+        discord.ui.Separator(),
+        discord.ui.ActionRow(discord.ui.Button(
+            label="Перейти к сообщению", style=discord.ButtonStyle.link, url=after.jump_url
+        )),
+        accent_color=COLOR,
     ))
+    await send_message_log(before.guild, view)
 
 
 @bot.event
@@ -1612,21 +1626,37 @@ async def on_message_delete(message: discord.Message) -> None:
         return
 
     deleter = await find_message_deleter(message)
-    lines = [
+    info_lines = []
+    if deleter:
+        info_lines.append(f"**Исполнитель:** {deleter.mention} (`{deleter.id}`)")
+    info_lines.extend([
         f"**Пользователь:** {message.author.mention}",
         f"**ID:** `{message.author.id}`",
         f"**Канал:** {message.channel.mention} (`{message.channel.id}`)",
-    ]
-    if deleter:
-        lines.append(f"**Удалил:** {deleter.mention} (`{deleter.id}`)")
+    ])
+
+    content_lines: list[str] = []
     if message.content and message.content.strip():
-        lines.extend(["", "**Сообщение**", limited_text(message.content)])
+        content_lines.extend(["**Сообщение:**", f"> {limited_text(message.content)}"])
     if message.attachments:
-        lines.extend(["", "**Вложения**"])
-        lines.extend(f"[{item.filename}]({item.url})" for item in message.attachments)
-    await send_message_log(message.guild, log_layout(
-        "Логи сообщений", "Сообщение удалено", "\n".join(lines)
-    ))
+        if content_lines:
+            content_lines.append("")
+        attachment_title = "**Вложение:**" if len(message.attachments) == 1 else "**Вложения:**"
+        content_lines.append(attachment_title)
+        content_lines.extend(f"> [{item.filename}]({item.url})" for item in message.attachments)
+
+    items: list[Any] = [
+        discord.ui.TextDisplay("-# Логи сообщений"),
+        discord.ui.TextDisplay("## Сообщение удалено"),
+        discord.ui.Separator(),
+        discord.ui.TextDisplay("\n".join(info_lines)),
+        discord.ui.Separator(),
+    ]
+    if content_lines:
+        items.append(discord.ui.TextDisplay("\n".join(content_lines)))
+    view = discord.ui.LayoutView(timeout=None)
+    view.add_item(discord.ui.Container(*items, accent_color=COLOR))
+    await send_message_log(message.guild, view)
 
 
 def server_member_log_layout(member: discord.Member, *, joined: bool) -> discord.ui.LayoutView:
@@ -1635,7 +1665,7 @@ def server_member_log_layout(member: discord.Member, *, joined: bool) -> discord
         action = "присоединился к серверу."
         details = (
             f"**Аккаунт создан:** {discord_datetime(member.created_at)}\n"
-            f"**На сервере:** **{member.guild.member_count or 0} участников**"
+            f"**На сервере:** {member.guild.member_count or 0} участников."
         )
     else:
         title = "Участник покинул сервер"
@@ -1651,8 +1681,8 @@ def server_member_log_layout(member: discord.Member, *, joined: bool) -> discord
             stayed_text = "Неизвестно"
         details = (
             f"**Присоединился:** {joined_text}\n"
-            f"**Пробыл на сервере:** **{stayed_text}**\n"
-            f"**На сервере:** **{member.guild.member_count or 0} участников**"
+            f"**Пробыл на сервере:** {stayed_text}\n"
+            f"**На сервере:** {member.guild.member_count or 0} участников."
         )
 
     view = discord.ui.LayoutView(timeout=None)
@@ -1661,7 +1691,7 @@ def server_member_log_layout(member: discord.Member, *, joined: bool) -> discord
         discord.ui.TextDisplay(f"## {title}"),
         discord.ui.Separator(),
         discord.ui.TextDisplay(
-            f"{member.mention} {action}\n\n"
+            f"{member.mention}, {action}\n\n"
             f"**Пользователь:** {member}\n"
             f"**ID:** `{member.id}`"
         ),
