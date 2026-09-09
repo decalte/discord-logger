@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,12 @@ PRIVATE_ROOM_CONTROL_CHANNEL_ID = 1546849303379706016
 PRIVATE_ROOM_CREATE_CHANNEL_ID = 1546849353371492413
 DUEL_CATEGORY_ID = 1546866271482683494
 
+# Каналы логов из исходного файла.
+SERVER_LOG_CHANNEL_ID = int(os.getenv("SERVER_LOG_CHANNEL_ID", "1547180990814756915"))
+MESSAGE_LOG_CHANNEL_ID = int(os.getenv("MESSAGE_LOG_CHANNEL_ID", "1547180990814756915"))
+
 COLOR = discord.Color(0x303136)
+MOSCOW_TZ = timezone(timedelta(hours=3))
 BASE_DIR = Path(__file__).resolve().parent
 PRIVATE_ROOMS_FILE = BASE_DIR / "private_rooms.json"
 
@@ -57,6 +63,108 @@ def save_json(path: Path, data: Any) -> None:
         temporary_path.replace(path)
     except OSError as error:
         print(f"Не удалось сохранить {path.name}: {error}")
+
+
+# -----------------------------------------------------------------------------
+# Логи сообщений, входов и выходов
+# -----------------------------------------------------------------------------
+
+def moscow_time(value: datetime | None = None) -> datetime:
+    if value is None:
+        value = datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(MOSCOW_TZ)
+
+
+def discord_datetime(value: datetime | None = None) -> str:
+    if value is None:
+        value = datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return f"<t:{int(value.timestamp())}:f>"
+
+
+def member_id_text(user: discord.abc.User) -> str:
+    return f"{user.mention}\nID: `{user.id}`"
+
+
+def channel_id_text(channel: discord.abc.GuildChannel | discord.Thread) -> str:
+    return f"{channel.mention}\nID: `{channel.id}`"
+
+
+def limited_text(text: str | None, fallback: str = "Отсутствует") -> str:
+    value = (text or "").strip() or fallback
+    return value[:997] + "..." if len(value) > 1000 else value
+
+
+async def get_log_channel(guild: discord.Guild, channel_id: int) -> discord.abc.Messageable | None:
+    channel = guild.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await guild.fetch_channel(channel_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as error:
+            print(f"Не удалось получить канал логов {channel_id}: {error}")
+            return None
+    if not isinstance(channel, discord.abc.Messageable):
+        print(f"Канал {channel_id} не поддерживает отправку сообщений.")
+        return None
+    return channel
+
+
+async def send_log_to(guild: discord.Guild, view: discord.ui.LayoutView, channel_id: int) -> discord.Message | None:
+    channel = await get_log_channel(guild, channel_id)
+    if channel is None:
+        return None
+    try:
+        return await channel.send(view=view, allowed_mentions=discord.AllowedMentions.none())
+    except (discord.Forbidden, discord.HTTPException) as error:
+        print(f"Ошибка отправки лога в канал {channel_id}: {error}")
+        return None
+
+
+def log_layout(section: str, title: str, body: str, *, url: str | None = None) -> discord.ui.LayoutView:
+    items: list[Any] = [
+        discord.ui.TextDisplay(f"## {section}"),
+        discord.ui.TextDisplay(f"### {title}"),
+        discord.ui.Separator(),
+        discord.ui.TextDisplay(body),
+    ]
+    if url:
+        items.append(discord.ui.Separator())
+        items.append(discord.ui.ActionRow(
+            discord.ui.Button(label="Перейти к сообщению", style=discord.ButtonStyle.link, url=url)
+        ))
+    view = discord.ui.LayoutView(timeout=None)
+    view.add_item(discord.ui.Container(*items, accent_color=COLOR))
+    return view
+
+
+async def send_server_log(guild: discord.Guild, view: discord.ui.LayoutView) -> discord.Message | None:
+    return await send_log_to(guild, view, SERVER_LOG_CHANNEL_ID)
+
+
+async def send_message_log(guild: discord.Guild, view: discord.ui.LayoutView) -> discord.Message | None:
+    return await send_log_to(guild, view, MESSAGE_LOG_CHANNEL_ID)
+
+
+async def find_message_deleter(message: discord.Message) -> discord.abc.User | None:
+    await asyncio.sleep(1)
+    if not message.guild:
+        return None
+    try:
+        async for entry in message.guild.audit_logs(limit=8, action=discord.AuditLogAction.message_delete):
+            if not entry.target or entry.target.id != message.author.id:
+                continue
+            audit_channel = getattr(entry.extra, "channel", None)
+            if audit_channel and audit_channel.id != message.channel.id:
+                continue
+            if (datetime.now(timezone.utc) - entry.created_at).total_seconds() > 10:
+                continue
+            return None if entry.user.id == message.author.id else entry.user
+    except (discord.Forbidden, discord.HTTPException):
+        return None
+    return None
 
 def default_private_room_settings() -> dict[str, Any]:
     return {
@@ -142,11 +250,23 @@ async def send_private_room_reply(
     *,
     view: discord.ui.View | None = None,
 ) -> None:
-    embed = discord.Embed(title=title, description=description, color=COLOR)
+    # Components V2: сохраняем компактный заголовок без ## и добавляем
+    # настоящий системный Separator Discord сразу после него.
+    items: list[Any] = [
+        discord.ui.TextDisplay(f"**{title}**"),
+        discord.ui.Separator(),
+        discord.ui.TextDisplay(description),
+    ]
+    if view is not None and view.children:
+        items.append(discord.ui.ActionRow(*view.children))
+
+    reply_view = discord.ui.LayoutView(timeout=60)
+    reply_view.add_item(discord.ui.Container(*items, accent_color=COLOR))
+
     if interaction.response.is_done():
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        await interaction.followup.send(view=reply_view, ephemeral=True)
     else:
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.response.send_message(view=reply_view, ephemeral=True)
 
 
 async def require_private_room(
@@ -1241,11 +1361,14 @@ async def create_duel_channel(
 
 class DuelChallengeView(discord.ui.View):
     def __init__(self, challenger_id: int, opponent_id: int | None):
-        super().__init__(timeout=120)
+        # Кнопка фактически помещается внутрь Components V2 LayoutView, поэтому
+        # стандартный timeout этого View не запускается. Таймер вызова ведём сами.
+        super().__init__(timeout=None)
         self.challenger_id = challenger_id
         self.opponent_id = opponent_id
         self.message: discord.Message | None = None
         self.accepted = False
+        self.timeout_task: asyncio.Task[None] | None = None
 
     def release_pending(self) -> None:
         pending_duel_users.discard(self.challenger_id)
@@ -1290,6 +1413,8 @@ class DuelChallengeView(discord.ui.View):
 
         self.accepted = True
         self.stop()
+        if self.timeout_task and not self.timeout_task.done():
+            self.timeout_task.cancel()
         pending_duel_users.add(opponent.id)
 
         await interaction.response.edit_message(
@@ -1357,19 +1482,30 @@ class DuelChallengeView(discord.ui.View):
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
-    async def on_timeout(self) -> None:
+    async def expire_after(self, seconds: int = 360) -> None:
+        try:
+            await asyncio.sleep(seconds)
+        except asyncio.CancelledError:
+            return
+
         if self.accepted:
             return
+
         self.release_pending()
         if self.message is None:
             return
 
         if self.opponent_id is None:
-            description = "Вызов никто не принял"
+            description = "Вызов никто не принял."
         else:
             description = f"<@{self.opponent_id}>, не принял вызов."
+
         try:
-            await self.message.edit(embed=None, view=duel_layout("Вызов не принят", description), allowed_mentions=discord.AllowedMentions.none())
+            await self.message.edit(
+                embed=None,
+                view=duel_layout("Вызов не принят", description),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             pass
 
@@ -1422,6 +1558,8 @@ async def duel_command(interaction: discord.Interaction, opponent: discord.Membe
     )
     try:
         view.message = await interaction.original_response()
+        # Вызов действует 6 минут. После этого он автоматически отменяется.
+        view.timeout_task = asyncio.create_task(view.expire_after(360))
     except discord.HTTPException:
         view.release_pending()
 
@@ -1449,6 +1587,99 @@ async def on_message(message: discord.Message) -> None:
 
     if duel["mode"] == "endurance":
         duel["last_message_at"][message.author.id] = asyncio.get_running_loop().time()
+
+
+@bot.event
+async def on_message_edit(before: discord.Message, after: discord.Message) -> None:
+    if before.author.bot or not before.guild or before.content == after.content:
+        return
+
+    body = (
+        f"**Пользователь:** {before.author.mention}\n"
+        f"**ID:** `{before.author.id}`\n"
+        f"**Канал:** {before.channel.mention} (`{before.channel.id}`)\n\n"
+        f"**Было**\n{limited_text(before.content, 'Текст отсутствует')}\n\n"
+        f"**Стало**\n{limited_text(after.content, 'Текст отсутствует')}"
+    )
+    await send_message_log(before.guild, log_layout(
+        "Логи сообщений", "Сообщение изменено", body, url=after.jump_url
+    ))
+
+
+@bot.event
+async def on_message_delete(message: discord.Message) -> None:
+    if message.author.bot or not message.guild:
+        return
+
+    deleter = await find_message_deleter(message)
+    lines = [
+        f"**Пользователь:** {message.author.mention}",
+        f"**ID:** `{message.author.id}`",
+        f"**Канал:** {message.channel.mention} (`{message.channel.id}`)",
+    ]
+    if deleter:
+        lines.append(f"**Удалил:** {deleter.mention} (`{deleter.id}`)")
+    if message.content and message.content.strip():
+        lines.extend(["", "**Сообщение**", limited_text(message.content)])
+    if message.attachments:
+        lines.extend(["", "**Вложения**"])
+        lines.extend(f"[{item.filename}]({item.url})" for item in message.attachments)
+    await send_message_log(message.guild, log_layout(
+        "Логи сообщений", "Сообщение удалено", "\n".join(lines)
+    ))
+
+
+def server_member_log_layout(member: discord.Member, *, joined: bool) -> discord.ui.LayoutView:
+    if joined:
+        title = "Участник присоединился"
+        action = "присоединился к серверу."
+        details = (
+            f"**Аккаунт создан:** {discord_datetime(member.created_at)}\n"
+            f"**На сервере:** **{member.guild.member_count or 0} участников**"
+        )
+    else:
+        title = "Участник покинул сервер"
+        action = "покинул сервер."
+        joined_at = member.joined_at
+        joined_text = discord_datetime(joined_at) if joined_at else "Неизвестно"
+        if joined_at is not None:
+            now = datetime.now(timezone.utc)
+            joined_utc = joined_at if joined_at.tzinfo else joined_at.replace(tzinfo=timezone.utc)
+            days = max(0, (now - joined_utc.astimezone(timezone.utc)).days)
+            stayed_text = f"{days} дн."
+        else:
+            stayed_text = "Неизвестно"
+        details = (
+            f"**Присоединился:** {joined_text}\n"
+            f"**Пробыл на сервере:** **{stayed_text}**\n"
+            f"**На сервере:** **{member.guild.member_count or 0} участников**"
+        )
+
+    view = discord.ui.LayoutView(timeout=None)
+    view.add_item(discord.ui.Container(
+        discord.ui.TextDisplay("-# Логи сервера"),
+        discord.ui.TextDisplay(f"## {title}"),
+        discord.ui.Separator(),
+        discord.ui.TextDisplay(
+            f"{member.mention} {action}\n\n"
+            f"**Пользователь:** {member}\n"
+            f"**ID:** `{member.id}`"
+        ),
+        discord.ui.Separator(),
+        discord.ui.TextDisplay(details),
+        accent_color=COLOR,
+    ))
+    return view
+
+
+@bot.event
+async def on_member_join(member: discord.Member) -> None:
+    await send_server_log(member.guild, server_member_log_layout(member, joined=True))
+
+
+@bot.event
+async def on_member_remove(member: discord.Member) -> None:
+    await send_server_log(member.guild, server_member_log_layout(member, joined=False))
 
 
 @bot.event
