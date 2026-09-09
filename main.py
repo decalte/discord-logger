@@ -1271,7 +1271,7 @@ class DuelChallengeView(discord.ui.View):
 
         if self.opponent_id is not None and interaction.user.id != self.opponent_id:
             await interaction.response.send_message(
-                view=duel_layout("Не удалось начать дуэль", "Этот вызов предназначен другому участнику."),
+                view=duel_layout("Начать дуэль", "Этот вызов предназначен другому участнику."),
                 ephemeral=True,
             )
             return
@@ -1279,7 +1279,7 @@ class DuelChallengeView(discord.ui.View):
         opponent = interaction.user
         if user_in_active_duel(challenger.id) or user_in_active_duel(opponent.id):
             await interaction.response.send_message(
-                view=duel_layout("Не удалось начать дуэль", "Один из участников уже находится в активной дуэли."),
+                view=duel_layout("Начать дуэль", "Один из участников уже находится в активной дуэли."),
                 ephemeral=True,
             )
             return
