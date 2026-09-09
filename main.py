@@ -1011,10 +1011,8 @@ def duel_stats_text(duel: dict[str, Any], member_id: int) -> str:
     stats = duel["stats"][member_id]
     return (
         f"Сообщений: **{stats['messages']}**\n"
-        f"Символов: **{stats['characters']}**\n"
         f"WPM: **{duel_wpm(duel, member_id)}**\n"
-        f"Макс. сообщений подряд: **{stats['max_streak']}**\n"
-        f"Макс. символов в сообщении: **{stats['max_message_chars']}**"
+        f"Макс. сообщений подряд: **{stats['max_streak']}**"
     )
 
 
@@ -1032,22 +1030,28 @@ def duel_result_details_text(duel: dict[str, Any]) -> str:
 def duel_finished_public_layout(
     duel: dict[str, Any], winner_id: int | None,
 ) -> discord.ui.LayoutView:
-    """Public result: winner statistics, or both participants in a draw."""
+    """Public result: winner/loser statistics, or both participants in a draw."""
+    first_id, second_id = duel["players"]
     items: list[Any] = [
         discord.ui.TextDisplay("-# Дуэль"),
         discord.ui.TextDisplay("## Дуэль окончена"),
         discord.ui.Separator(),
+        discord.ui.TextDisplay(
+            f"<@{first_id}> vs <@{second_id}>\n" + duel_result_details_text(duel)
+        ),
+        discord.ui.Separator(),
     ]
     if winner_id is not None:
+        loser_id = next(member_id for member_id in duel["players"] if member_id != winner_id)
         items.append(discord.ui.TextDisplay(
-            f"**Победитель:** <@{winner_id}>\n\n{duel_result_details_text(duel)}"
+            f"**Победитель:** <@{winner_id}>\n" + duel_stats_text(duel, winner_id)
         ))
         items.append(discord.ui.Separator())
-        items.append(discord.ui.TextDisplay(duel_stats_text(duel, winner_id)))
-    else:
         items.append(discord.ui.TextDisplay(
-            f"**Ничья.**\n\n{duel_result_details_text(duel)}"
+            f"**Проигравший:** <@{loser_id}>\n" + duel_stats_text(duel, loser_id)
         ))
+    else:
+        items.append(discord.ui.TextDisplay("**Ничья.**"))
         for index, member_id in enumerate(duel["players"]):
             items.append(discord.ui.TextDisplay(
                 f"**<@{member_id}>**\n" + duel_stats_text(duel, member_id)
@@ -1133,30 +1137,32 @@ async def finish_duel(channel: discord.TextChannel, *, loser_id: int | None = No
         elif score_b > score_a:
             winner_id = second_id
 
-    result = (
-        f"**Ничья.**\n\n{duel_result_details_text(duel)}"
-        if winner_id is None
-        else f"**Победитель:** <@{winner_id}>\n\n{duel_result_details_text(duel)}"
-    )
-    if winner_id == second_id:
-        display_order = ((second_id, second_name), (first_id, first_name))
-    else:
-        display_order = ((first_id, first_name), (second_id, second_name))
-
     result_items: list[Any] = [
         discord.ui.TextDisplay('-# Дуэль'),
         discord.ui.TextDisplay('## Результаты дуэли'),
         discord.ui.Separator(),
-        discord.ui.TextDisplay(result),
+        discord.ui.TextDisplay(
+            f"{first_name} vs {second_name}\n" + duel_result_details_text(duel)
+        ),
         discord.ui.Separator(),
     ]
-    for index, (member_id, name) in enumerate(display_order):
-        result_items.append(
-            discord.ui.TextDisplay(f"**{name}**\n{duel_stats_text(duel, member_id)}")
-        )
-        # Divider only between participants; no trailing divider at the end.
-        if index == 0:
-            result_items.append(discord.ui.Separator())
+    if winner_id is not None:
+        actual_loser_id = second_id if winner_id == first_id else first_id
+        result_items.append(discord.ui.TextDisplay(
+            f"**Победитель:** <@{winner_id}>\n" + duel_stats_text(duel, winner_id)
+        ))
+        result_items.append(discord.ui.Separator())
+        result_items.append(discord.ui.TextDisplay(
+            f"**Проигравший:** <@{actual_loser_id}>\n" + duel_stats_text(duel, actual_loser_id)
+        ))
+    else:
+        result_items.append(discord.ui.TextDisplay("**Ничья.**"))
+        for index, (member_id, name) in enumerate(((first_id, first_name), (second_id, second_name))):
+            result_items.append(discord.ui.TextDisplay(
+                f"**{name}**\n{duel_stats_text(duel, member_id)}"
+            ))
+            if index == 0:
+                result_items.append(discord.ui.Separator())
     if reason and duel.get("mode") == "endurance":
         # Divider after the second participant's final statistic, before the endurance reason.
         result_items.append(discord.ui.Separator())
