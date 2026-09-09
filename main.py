@@ -990,8 +990,7 @@ def user_busy_with_duel(user_id: int) -> bool:
 
 
 def duel_minutes(duel: dict[str, Any]) -> float:
-    if duel.get("mode") == "speed" and duel.get("duration_seconds"):
-        return max(float(duel["duration_seconds"]) / 60.0, 1 / 60)
+    # Monkeytype-style WPM uses the actual elapsed typing time in minutes.
     started_at = duel.get("started_at")
     ended_at = duel.get("ended_at")
     if started_at is None:
@@ -1003,7 +1002,9 @@ def duel_minutes(duel: dict[str, Any]) -> float:
 
 def duel_wpm(duel: dict[str, Any], member_id: int) -> int:
     stats = duel["stats"][member_id]
-    return round((stats["characters"] / 5) / duel_minutes(duel))
+    # 5 typed characters (including spaces, digits and punctuation) = 1 standard word.
+    standard_words = stats["characters"] / 5.0
+    return round(standard_words / duel_minutes(duel))
 
 
 def duel_stats_text(duel: dict[str, Any], member_id: int) -> str:
@@ -1017,6 +1018,17 @@ def duel_stats_text(duel: dict[str, Any], member_id: int) -> str:
     )
 
 
+def duel_result_details_text(duel: dict[str, Any]) -> str:
+    lines: list[str] = []
+    if duel.get("mode") == "speed":
+        seconds = int(duel.get("duration_seconds") or 60)
+        lines.append(f"**Длительность:** {seconds} секунд.")
+        lines.append("**Тип дуэли:** На скорость.")
+    else:
+        lines.append("**Тип дуэли:** На выдержку.")
+    return "\n".join(lines)
+
+
 def duel_finished_public_layout(
     duel: dict[str, Any], winner_id: int | None,
 ) -> discord.ui.LayoutView:
@@ -1028,12 +1040,14 @@ def duel_finished_public_layout(
     ]
     if winner_id is not None:
         items.append(discord.ui.TextDisplay(
-            f"**Победитель:** <@{winner_id}>"
+            f"**Победитель:** <@{winner_id}>\n\n{duel_result_details_text(duel)}"
         ))
         items.append(discord.ui.Separator())
         items.append(discord.ui.TextDisplay(duel_stats_text(duel, winner_id)))
     else:
-        items.append(discord.ui.TextDisplay("**Ничья.**"))
+        items.append(discord.ui.TextDisplay(
+            f"**Ничья.**\n\n{duel_result_details_text(duel)}"
+        ))
         for index, member_id in enumerate(duel["players"]):
             items.append(discord.ui.TextDisplay(
                 f"**<@{member_id}>**\n" + duel_stats_text(duel, member_id)
@@ -1119,7 +1133,11 @@ async def finish_duel(channel: discord.TextChannel, *, loser_id: int | None = No
         elif score_b > score_a:
             winner_id = second_id
 
-    result = "**Ничья.**" if winner_id is None else f"**Победитель:** <@{winner_id}>"
+    result = (
+        f"**Ничья.**\n\n{duel_result_details_text(duel)}"
+        if winner_id is None
+        else f"**Победитель:** <@{winner_id}>\n\n{duel_result_details_text(duel)}"
+    )
     if winner_id == second_id:
         display_order = ((second_id, second_name), (first_id, first_name))
     else:
