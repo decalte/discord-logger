@@ -911,7 +911,7 @@ container = discord.ui.Container(
 
     accent_color=COLOR,
 )
-        self.add_item(container)
+self.add_item(container)
 
 
 def message_has_private_room_panel(message: discord.Message) -> bool:
