@@ -890,27 +890,27 @@ class PrivateRoomPanelView(discord.ui.LayoutView):
     def __init__(self):
         super().__init__(timeout=None)
 
-    container = discord.ui.Container(
-        discord.ui.TextDisplay("-# Приватные комнаты"),
-        discord.ui.TextDisplay(
-            "## Управление приватной комнатой"
-        ),
-        discord.ui.Separator(),
-        discord.ui.TextDisplay(
-            "Здесь Вы можете управлять своей приватной комнатой.\n"
-            "Используйте разделы ниже, чтобы изменить её настройки и управлять участниками."
-        ),
-        discord.ui.Separator(),
-        discord.ui.ActionRow(
-            PrivateRoomSettingsSelect(),
-        ),
-        discord.ui.ActionRow(
-            PrivateRoomMemberActionsSelect()
-        ),
-        accent_color=COLOR,
-    )
+        container = discord.ui.Container(
+            discord.ui.TextDisplay("-# Приватные комнаты"),
+            discord.ui.TextDisplay(
+                "## Управление приватной комнатой"
+            ),
+            discord.ui.Separator(),
+            discord.ui.TextDisplay(
+                "Здесь Вы можете управлять своей приватной комнатой.\n"
+                "Используйте разделы ниже, чтобы изменить её настройки и управлять участниками."
+            ),
+            discord.ui.Separator(),
+            discord.ui.ActionRow(
+                PrivateRoomSettingsSelect(),
+            ),
+            discord.ui.ActionRow(
+                PrivateRoomMemberActionsSelect()
+            ),
+            accent_color=COLOR,
+        )
 
-    self.add_item(container)
+        self.add_item(container)
 
 
 def message_has_private_room_panel(message: discord.Message) -> bool:
