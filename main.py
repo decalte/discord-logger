@@ -888,7 +888,7 @@ class PrivateRoomPanelView(discord.ui.LayoutView):
     """Постоянная панель приватных комнат на Discord Components V2."""
 
     def __init__(self):
-    super().__init__(timeout=None)
+        super().__init__(timeout=None)
 
     container = discord.ui.Container(
         discord.ui.TextDisplay("-# Приватные комнаты"),
