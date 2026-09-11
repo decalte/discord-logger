@@ -890,19 +890,11 @@ class PrivateRoomPanelView(discord.ui.LayoutView):
     def __init__(self):
         super().__init__(timeout=None)
 
-        container = discord.ui.Container(
-    discord.ui.TextDisplay("-# Приватные комнаты"),
-    discord.ui.TextDisplay(
-        container = discord.ui.Container(
+container = discord.ui.Container(
     discord.ui.TextDisplay("-# Приватные комнаты"),
 
     discord.ui.TextDisplay(
-        "## Управление приватной комнатой"
-    ),
-
-    discord.ui.Separator(),
-
-    discord.ui.TextDisplay(
+        "## Управление приватной комнатой\n\n"
         "Здесь Вы можете управлять своей приватной комнатой.\n"
         "Используйте разделы ниже, чтобы изменить её настройки и управлять участниками."
     ),
